@@ -3,6 +3,7 @@ import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
 import uuid
+from app.gemini.processor import gemini_processor
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,9 @@ class ChatMessageProcessor:
             "help": self._handle_help_command,
             "status": self._handle_status_command,
             "clear": self._handle_clear_command,
+            "functions": self._handle_functions_command,
+            "reset": self._handle_reset_command,
+            "history": self._handle_history_command,
         }
 
     async def process_message(
@@ -201,27 +205,61 @@ class ChatMessageProcessor:
         if command_name in self.command_handlers:
             return await self.command_handlers[command_name](command_parts[1:], session_id)
         else:
-            return MessageHandler.create_error_response(
-                f"Unknown command: {command_name}. Type 'help' for available commands.",
-                session_id=session_id
+            # Check if it's a Gemini command
+            gemini_result = await gemini_processor.handle_command_message(
+                command_name, command_parts[1:], session_id
             )
+            if gemini_result["success"]:
+                return MessageHandler.create_response(
+                    content=gemini_result["content"],
+                    session_id=session_id,
+                    metadata={"handler": gemini_result["handler"]}
+                )
+            else:
+                return MessageHandler.create_error_response(
+                    f"Unknown command: {command_name}. Type 'help' for available commands.",
+                    session_id=session_id
+                )
 
     async def _handle_chat_message(self, content: str, session_id: str) -> str:
         """
-        Handle regular chat messages.
-        Currently returns an echo, but will be replaced with Gemini AI in Phase 3.
+        Handle regular chat messages using Gemini AI processing.
+        Phase 3: Full AI integration with function calling.
         """
-        # Simple echo for now - this will be replaced with Gemini processing
-        echo_content = f"Echo: {content}"
+        try:
+            # Send typing indicator (optional enhancement)
+            # This could be implemented to show the user that processing is happening
 
-        return MessageHandler.create_response(
-            content=echo_content,
-            session_id=session_id,
-            metadata={
-                "processing_time": "0.001s",
-                "handler": "echo"
-            }
-        )
+            # Process message with Gemini AI
+            gemini_result = await gemini_processor.process_chat_message(
+                message=content,
+                session_id=session_id
+            )
+
+            if gemini_result["success"]:
+                return MessageHandler.create_response(
+                    content=gemini_result["content"],
+                    session_id=session_id,
+                    metadata={
+                        "processing_time": gemini_result.get("processing_time", "~0.5s"),
+                        "handler": gemini_result.get("handler", "gemini_ai"),
+                        "function_calls_made": gemini_result.get("function_calls_made", 0),
+                        "ai_powered": True
+                    }
+                )
+            else:
+                return MessageHandler.create_error_response(
+                    gemini_result.get("content", "I encountered an error processing your request."),
+                    session_id=session_id,
+                    error_code="GEMINI_PROCESSING_ERROR"
+                )
+        except Exception as e:
+            logger.error(f"Error in chat message processing: {e}")
+            return MessageHandler.create_error_response(
+                "I apologize, but I'm temporarily unable to process your request. Please try again.",
+                session_id=session_id,
+                error_code="PROCESSING_FAILURE"
+            )
 
     async def _handle_help_command(self, args: list, session_id: str) -> str:
         """Handle help command"""
@@ -230,13 +268,18 @@ Available commands:
 • help - Show this help message
 • status - Show connection status
 • clear - Clear chat history
+• functions - List all available AI functions
+• reset - Reset AI chat session
+• history - Show recent chat history
 
 For cinema management, try natural language like:
-• "Schedule a movie for tonight"
-• "Show me today's revenue"
+• "Schedule Avatar for Cinema 1 tonight at 8pm"
+• "Show me today's revenue report"
 • "What cinemas are available?"
+• "Which movies are most popular this week?"
+• "Cancel the 7pm showing of Inception"
 
-(AI features will be available in Phase 3)
+🤖 AI features are now fully active!
         """.strip()
 
         return MessageHandler.create_system_response(
@@ -247,20 +290,14 @@ For cinema management, try natural language like:
 
     async def _handle_status_command(self, args: list, session_id: str) -> str:
         """Handle status command"""
-        status_text = f"""
-System Status:
-• Session ID: {session_id}
-• Status: Connected
-• Backend: FastAPI + WebSocket
-• Phase: 2 (Core Setup) - Echo Mode
-• AI Integration: Coming in Phase 3
-        """.strip()
-
+        # Use Gemini processor for enhanced status
+        gemini_result = await gemini_processor.get_system_status(session_id)
         return MessageHandler.create_system_response(
-            status_text,
+            gemini_result["content"],
             session_id=session_id,
             system_type="status"
         )
+
 
     async def _handle_clear_command(self, args: list, session_id: str) -> str:
         """Handle clear command"""
@@ -268,6 +305,39 @@ System Status:
             "Chat history cleared.",
             session_id=session_id,
             system_type="clear"
+        )
+
+    async def _handle_functions_command(self, args: list, session_id: str) -> str:
+        """Handle functions command"""
+        gemini_result = await gemini_processor.handle_command_message(
+            "functions", args, session_id
+        )
+        return MessageHandler.create_system_response(
+            gemini_result["content"],
+            session_id=session_id,
+            system_type="functions"
+        )
+
+    async def _handle_reset_command(self, args: list, session_id: str) -> str:
+        """Handle reset command"""
+        gemini_result = await gemini_processor.handle_command_message(
+            "reset", args, session_id
+        )
+        return MessageHandler.create_system_response(
+            gemini_result["content"],
+            session_id=session_id,
+            system_type="reset"
+        )
+
+    async def _handle_history_command(self, args: list, session_id: str) -> str:
+        """Handle history command"""
+        gemini_result = await gemini_processor.handle_command_message(
+            "history", args, session_id
+        )
+        return MessageHandler.create_system_response(
+            gemini_result["content"],
+            session_id=session_id,
+            system_type="history"
         )
 
 # Global message processor instance
