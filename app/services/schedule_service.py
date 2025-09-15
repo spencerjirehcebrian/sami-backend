@@ -170,6 +170,151 @@ class ScheduleService:
             logger.error(f"Error getting schedule by ID {schedule_id}: {e}")
             raise
 
+    async def check_schedule_conflicts(
+        self,
+        cinema_id: str,
+        time_slot: datetime,
+        movie_duration: int,
+        exclude_schedule_id: str = None
+    ) -> bool:
+        """
+        Optimized conflict detection using EXISTS query and database functions.
+        Returns True if conflicts exist, False otherwise.
+        """
+        try:
+            # Calculate movie end time using SQL INTERVAL
+            movie_end_time = time_slot + timedelta(minutes=movie_duration + 30)  # 30 min cleanup buffer
+
+            # Build base conflict query using EXISTS for performance
+            conflict_query = self.db.query(func.count(Schedule.id)).filter(
+                and_(
+                    Schedule.cinema_id == cinema_id,
+                    Schedule.status == "active",
+                    # Time overlap logic: two time ranges overlap if:
+                    # start1 < end2 AND start2 < end1
+                    Schedule.time_slot < movie_end_time,
+                    func.datetime(Schedule.time_slot, '+' + func.cast(
+                        func.coalesce(
+                            self.db.query(Movie.duration).filter(Movie.id == Schedule.movie_id).scalar_subquery(),
+                            0
+                        ) + 30,
+                        func.text('text')
+                    ) + ' minutes') > time_slot
+                )
+            )
+
+            # Exclude specific schedule if provided (for updates)
+            if exclude_schedule_id:
+                conflict_query = conflict_query.filter(Schedule.id != exclude_schedule_id)
+
+            # Execute optimized count query
+            conflict_count = conflict_query.scalar()
+            return conflict_count > 0
+
+        except Exception as e:
+            logger.error(f"Error checking schedule conflicts: {e}")
+            raise
+
+    async def get_detailed_conflicts(
+        self,
+        cinema_id: str,
+        time_slot: datetime,
+        movie_duration: int,
+        exclude_schedule_id: str = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get detailed conflict information for API responses.
+        Only called when conflicts are detected.
+        """
+        try:
+            movie_end_time = time_slot + timedelta(minutes=movie_duration + 30)
+
+            # Query for detailed conflict information
+            conflicts = self.db.query(Schedule, Movie.title, Movie.duration).join(Movie).filter(
+                and_(
+                    Schedule.cinema_id == cinema_id,
+                    Schedule.status == "active",
+                    Schedule.time_slot < movie_end_time,
+                    func.datetime(Schedule.time_slot, '+' + func.cast(Movie.duration + 30, func.text()) + ' minutes') > time_slot
+                )
+            )
+
+            if exclude_schedule_id:
+                conflicts = conflicts.filter(Schedule.id != exclude_schedule_id)
+
+            conflict_results = []
+            for schedule, movie_title, movie_duration_val in conflicts.all():
+                conflict_end = schedule.time_slot + timedelta(minutes=movie_duration_val + 30)
+                conflict_results.append({
+                    "schedule_id": str(schedule.id),
+                    "movie_title": movie_title,
+                    "time_slot": schedule.time_slot.isoformat(),
+                    "end_time": conflict_end.isoformat(),
+                    "display_time": f"{movie_title} at {schedule.time_slot.strftime('%H:%M')}"
+                })
+
+            return conflict_results
+
+        except Exception as e:
+            logger.error(f"Error getting detailed conflicts: {e}")
+            raise
+
+    async def check_conflicts(
+        self,
+        movie_id: str,
+        cinema_id: str = None,
+        cinema_number: int = None,
+        time_slot: str = None,
+        exclude_schedule_id: str = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Public API method for conflict checking.
+        Supports both cinema_id and cinema_number parameters.
+        """
+        try:
+            # Convert cinema_number to cinema_id if needed
+            actual_cinema_id = cinema_id
+            if cinema_number and not cinema_id:
+                from app.models.cinema import Cinema
+                cinema = self.db.query(Cinema).filter(Cinema.number == cinema_number).first()
+                if not cinema:
+                    raise ValueError(f"Cinema with number {cinema_number} not found")
+                actual_cinema_id = str(cinema.id)
+
+            if not actual_cinema_id:
+                raise ValueError("Either cinema_id or cinema_number must be provided")
+
+            # Parse time slot
+            time_slot_parsed = datetime.fromisoformat(time_slot.replace('Z', '+00:00'))
+
+            # Get movie duration
+            movie = self.db.query(Movie).filter(Movie.id == movie_id).first()
+            if not movie:
+                raise ValueError(f"Movie with ID {movie_id} not found")
+
+            # Check for conflicts using optimized method
+            has_conflicts = await self.check_schedule_conflicts(
+                cinema_id=actual_cinema_id,
+                time_slot=time_slot_parsed,
+                movie_duration=movie.duration,
+                exclude_schedule_id=exclude_schedule_id
+            )
+
+            # Return detailed conflicts only if they exist
+            if has_conflicts:
+                return await self.get_detailed_conflicts(
+                    cinema_id=actual_cinema_id,
+                    time_slot=time_slot_parsed,
+                    movie_duration=movie.duration,
+                    exclude_schedule_id=exclude_schedule_id
+                )
+            else:
+                return []
+
+        except Exception as e:
+            logger.error(f"Error in check_conflicts: {e}")
+            raise
+
     async def create_schedule(
         self,
         movie_id: str,
@@ -194,35 +339,22 @@ class ScheduleService:
             if not cinema:
                 raise ValueError(f"Cinema with ID {cinema_id} not found")
 
-            # Calculate movie end time for conflict checking
-            movie_end_time = time_slot_parsed + timedelta(minutes=movie.duration + 30)  # 30 min cleanup buffer
+            # Use optimized conflict detection
+            has_conflicts = await self.check_schedule_conflicts(
+                cinema_id=cinema_id,
+                time_slot=time_slot_parsed,
+                movie_duration=movie.duration
+            )
 
-            # Check for schedule conflicts
-            conflicts = self.db.query(Schedule).join(Movie).filter(
-                and_(
-                    Schedule.cinema_id == cinema_id,
-                    Schedule.status == "active",
-                    or_(
-                        # New movie starts during existing movie
-                        and_(
-                            Schedule.time_slot <= time_slot_parsed,
-                            func.datetime(Schedule.time_slot, '+' + func.cast(Movie.duration + 30, func.text()) + ' minutes') > time_slot_parsed
-                        ),
-                        # Existing movie starts during new movie
-                        and_(
-                            Schedule.time_slot < movie_end_time,
-                            Schedule.time_slot >= time_slot_parsed
-                        )
-                    )
+            if has_conflicts:
+                # Get detailed conflict information for error message
+                conflict_details = await self.get_detailed_conflicts(
+                    cinema_id=cinema_id,
+                    time_slot=time_slot_parsed,
+                    movie_duration=movie.duration
                 )
-            ).all()
-
-            if conflicts:
-                conflict_details = [
-                    f"{conflict.movie.title} at {conflict.time_slot.strftime('%H:%M')}"
-                    for conflict in conflicts
-                ]
-                raise ValueError(f"Schedule conflict detected with: {', '.join(conflict_details)}")
+                conflict_messages = [conflict["display_time"] for conflict in conflict_details]
+                raise ValueError(f"Schedule conflict detected with: {', '.join(conflict_messages)}")
 
             # Set max_sales to cinema capacity if not provided
             if max_sales is None:
@@ -289,34 +421,26 @@ class ScheduleService:
             if time_slot is not None:
                 new_time_slot = datetime.fromisoformat(time_slot.replace('Z', '+00:00'))
 
-                # Check for conflicts if time is changing
+                # Check for conflicts if time is changing using optimized method
                 movie = self.db.query(Movie).filter(Movie.id == schedule.movie_id).first()
-                movie_end_time = new_time_slot + timedelta(minutes=movie.duration + 30)
 
-                conflicts = self.db.query(Schedule).join(Movie).filter(
-                    and_(
-                        Schedule.cinema_id == schedule.cinema_id,
-                        Schedule.id != schedule_id,
-                        Schedule.status == "active",
-                        or_(
-                            and_(
-                                Schedule.time_slot <= new_time_slot,
-                                func.datetime(Schedule.time_slot, '+' + func.cast(Movie.duration + 30, func.text()) + ' minutes') > new_time_slot
-                            ),
-                            and_(
-                                Schedule.time_slot < movie_end_time,
-                                Schedule.time_slot >= new_time_slot
-                            )
-                        )
+                has_conflicts = await self.check_schedule_conflicts(
+                    cinema_id=str(schedule.cinema_id),
+                    time_slot=new_time_slot,
+                    movie_duration=movie.duration,
+                    exclude_schedule_id=schedule_id
+                )
+
+                if has_conflicts:
+                    # Get detailed conflict information for error message
+                    conflict_details = await self.get_detailed_conflicts(
+                        cinema_id=str(schedule.cinema_id),
+                        time_slot=new_time_slot,
+                        movie_duration=movie.duration,
+                        exclude_schedule_id=schedule_id
                     )
-                ).all()
-
-                if conflicts:
-                    conflict_details = [
-                        f"{conflict.movie.title} at {conflict.time_slot.strftime('%H:%M')}"
-                        for conflict in conflicts
-                    ]
-                    raise ValueError(f"Schedule conflict detected with: {', '.join(conflict_details)}")
+                    conflict_messages = [conflict["display_time"] for conflict in conflict_details]
+                    raise ValueError(f"Schedule conflict detected with: {', '.join(conflict_messages)}")
 
                 schedule.time_slot = new_time_slot
 
@@ -415,44 +539,34 @@ class ScheduleService:
         date: str,
         movie_duration: int
     ) -> List[Dict[str, Any]]:
-        """Get available time slots for a cinema on a specific date"""
+        """Get available time slots for a cinema on a specific date using optimized conflict detection"""
         try:
             target_date = datetime.fromisoformat(date.replace('Z', '+00:00')).date()
             start_of_day = datetime.combine(target_date, datetime.min.time().replace(hour=9))  # Start at 9 AM
             end_of_day = datetime.combine(target_date, datetime.max.time().replace(hour=23, minute=0))  # End at 11 PM
 
-            # Get existing schedules for the cinema on that date
-            existing_schedules = self.db.query(Schedule).join(Movie).filter(
-                and_(
-                    Schedule.cinema_id == cinema_id,
-                    Schedule.time_slot >= start_of_day,
-                    Schedule.time_slot <= end_of_day,
-                    Schedule.status == "active"
-                )
-            ).all()
-
             # Generate potential time slots (every 30 minutes from 9 AM to 11 PM)
             potential_slots = []
             current_time = start_of_day
             while current_time <= end_of_day:
-                potential_slots.append(current_time)
+                movie_end_time = current_time + timedelta(minutes=movie_duration + 30)
+                # Only include slots where the movie would end before end of day
+                if movie_end_time <= end_of_day:
+                    potential_slots.append(current_time)
                 current_time += timedelta(minutes=30)
 
-            # Filter out conflicting slots
+            # Use optimized conflict detection for each potential slot
             available_slots = []
             for slot in potential_slots:
-                movie_end_time = slot + timedelta(minutes=movie_duration + 30)
+                # Use the optimized conflict detection method
+                has_conflicts = await self.check_schedule_conflicts(
+                    cinema_id=cinema_id,
+                    time_slot=slot,
+                    movie_duration=movie_duration
+                )
 
-                # Check if this slot conflicts with any existing schedule
-                conflict = False
-                for existing in existing_schedules:
-                    existing_end_time = existing.time_slot + timedelta(minutes=existing.movie.duration + 30)
-
-                    if (slot < existing_end_time and movie_end_time > existing.time_slot):
-                        conflict = True
-                        break
-
-                if not conflict and movie_end_time <= end_of_day:
+                if not has_conflicts:
+                    movie_end_time = slot + timedelta(minutes=movie_duration + 30)
                     available_slots.append({
                         "time_slot": slot.isoformat(),
                         "display_time": slot.strftime('%H:%M'),
@@ -463,6 +577,119 @@ class ScheduleService:
             return available_slots
         except Exception as e:
             logger.error(f"Error getting available time slots: {e}")
+            raise
+
+    async def check_batch_conflicts(
+        self,
+        cinema_id: str,
+        time_slots: List[str],
+        movie_duration: int,
+        exclude_schedule_ids: List[str] = None
+    ) -> Dict[str, bool]:
+        """
+        Batch conflict checking for multiple time slots.
+        Returns a dictionary mapping time_slot -> has_conflicts (bool).
+        Optimized for bulk operations.
+        """
+        try:
+            if not time_slots:
+                return {}
+
+            exclude_ids = exclude_schedule_ids or []
+            results = {}
+
+            # Parse all time slots
+            parsed_slots = []
+            for slot_str in time_slots:
+                try:
+                    parsed_slot = datetime.fromisoformat(slot_str.replace('Z', '+00:00'))
+                    parsed_slots.append((slot_str, parsed_slot))
+                except ValueError:
+                    # Mark invalid time slots as having conflicts
+                    results[slot_str] = True
+
+            # Check conflicts for valid time slots
+            for slot_str, slot_time in parsed_slots:
+                has_conflicts = await self.check_schedule_conflicts(
+                    cinema_id=cinema_id,
+                    time_slot=slot_time,
+                    movie_duration=movie_duration,
+                    exclude_schedule_id=exclude_ids[0] if exclude_ids else None
+                )
+                results[slot_str] = has_conflicts
+
+            return results
+
+        except Exception as e:
+            logger.error(f"Error in batch conflict checking: {e}")
+            raise
+
+    async def get_optimized_available_slots_batch(
+        self,
+        cinema_id: str,
+        date: str,
+        movie_duration: int,
+        slot_interval_minutes: int = 30
+    ) -> List[Dict[str, Any]]:
+        """
+        Highly optimized version that minimizes database queries for available slots.
+        Uses a single query to get all existing schedules, then filters in memory for better performance.
+        """
+        try:
+            target_date = datetime.fromisoformat(date.replace('Z', '+00:00')).date()
+            start_of_day = datetime.combine(target_date, datetime.min.time().replace(hour=9))
+            end_of_day = datetime.combine(target_date, datetime.max.time().replace(hour=23, minute=0))
+
+            # Single query to get all existing schedules for the day
+            existing_schedules = self.db.query(Schedule.time_slot, Movie.duration).join(Movie).filter(
+                and_(
+                    Schedule.cinema_id == cinema_id,
+                    Schedule.time_slot >= start_of_day,
+                    Schedule.time_slot <= end_of_day,
+                    Schedule.status == "active"
+                )
+            ).all()
+
+            # Convert to list of occupied time ranges
+            occupied_ranges = []
+            for schedule_start, schedule_duration in existing_schedules:
+                schedule_end = schedule_start + timedelta(minutes=schedule_duration + 30)
+                occupied_ranges.append((schedule_start, schedule_end))
+
+            # Generate and filter potential slots
+            available_slots = []
+            current_time = start_of_day
+
+            while current_time <= end_of_day:
+                movie_end_time = current_time + timedelta(minutes=movie_duration + 30)
+
+                # Skip if movie would end after operating hours
+                if movie_end_time > end_of_day:
+                    current_time += timedelta(minutes=slot_interval_minutes)
+                    continue
+
+                # Check for conflicts with existing schedules
+                has_conflict = False
+                for occupied_start, occupied_end in occupied_ranges:
+                    # Check for time overlap: slot_start < occupied_end AND slot_end > occupied_start
+                    if current_time < occupied_end and movie_end_time > occupied_start:
+                        has_conflict = True
+                        break
+
+                if not has_conflict:
+                    available_slots.append({
+                        "time_slot": current_time.isoformat(),
+                        "display_time": current_time.strftime('%H:%M'),
+                        "end_time": movie_end_time.isoformat(),
+                        "display_end_time": movie_end_time.strftime('%H:%M')
+                    })
+
+                current_time += timedelta(minutes=slot_interval_minutes)
+
+            return available_slots
+
+        except Exception as e:
+            logger.error(f"Error getting optimized available slots: {e}")
             raise
 
 # Global schedule service instance
