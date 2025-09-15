@@ -13,20 +13,24 @@ FastAPI backend for cinema schedule management system with AI-powered natural la
 ## Setup
 
 1. Install dependencies:
+
    ```bash
    poetry install
    ```
 
 2. Set up environment variables in `.env`:
+
    ```
-   DATABASE_URL=postgres://user:pass@host:port/db
+   DATABASE_URL=postgresql://user:pass@host:port/db
    GEMINI_API_KEY=your_api_key
    CORS_ORIGINS=http://localhost:3000
    ```
 
 3. Run database migrations:
+
    ```bash
    poetry run alembic upgrade head
+   poetry run python alembic/seed.py
    ```
 
 4. Start the server:
