@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.services.schedule_service import ScheduleService
+from app.exceptions import ValidationError, BusinessLogicError, ResourceNotFoundError, ConflictError
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 from datetime import datetime
@@ -26,32 +27,86 @@ class ScheduleUpdate(BaseModel):
     expected_attendance: Optional[int] = None
     actual_attendance: Optional[int] = None
 
-@router.get("", response_model=List[Dict[str, Any]])
+@router.get("", response_model=Dict[str, Any])
 async def get_schedules(
-    date: Optional[str] = Query(None, description="Filter by date (YYYY-MM-DD)"),
+    date_from: Optional[str] = Query(None, description="Filter from date (ISO format)"),
+    date_to: Optional[str] = Query(None, description="Filter to date (ISO format)"),
+    date: Optional[str] = Query(None, description="Filter by date (YYYY-MM-DD) - legacy parameter"),
+    cinema_id: Optional[str] = Query(None, description="Filter by cinema ID"),
     cinema_number: Optional[int] = Query(None, description="Filter by cinema number"),
     movie_id: Optional[str] = Query(None, description="Filter by movie ID"),
+    limit: int = Query(100, ge=1, le=1000, description="Number of records to return (1-1000)"),
+    offset: int = Query(0, ge=0, description="Number of records to skip"),
+    page: Optional[int] = Query(None, ge=1, description="Page number (alternative to offset)"),
+    require_date_filter: bool = Query(True, description="Require date filter for large queries"),
     db: Session = Depends(get_db)
 ):
-    """Get all schedules with optional filtering"""
+    """Get all schedules with optional filtering, pagination, and safety guards"""
     try:
         schedule_service = ScheduleService(db)
 
-        if date:
-            return await schedule_service.get_schedules_by_date(date)
+        # Handle legacy date parameter
+        if date and not date_from and not date_to:
+            # Convert single date to date range for that day
+            try:
+                target_date = datetime.fromisoformat(date.replace('Z', '+00:00')).date()
+                date_from = datetime.combine(target_date, datetime.min.time()).isoformat()
+                date_to = datetime.combine(target_date, datetime.max.time()).isoformat()
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD or ISO format.")
+
+        # Convert page to offset if provided
+        if page is not None:
+            offset = (page - 1) * limit
+
+        # Find cinema_id from cinema_number if provided
+        actual_cinema_id = cinema_id
+        if cinema_number and not cinema_id:
+            from app.models.cinema import Cinema
+            cinema = db.query(Cinema).filter(Cinema.number == cinema_number).first()
+            if cinema:
+                actual_cinema_id = str(cinema.id)
+
+        return await schedule_service.get_all_schedules(
+            date_from=date_from,
+            date_to=date_to,
+            cinema_id=actual_cinema_id,
+            movie_id=movie_id,
+            limit=limit,
+            offset=offset,
+            require_date_filter=require_date_filter
+        )
+    except ValidationError as e:
+        logger.warning(f"Validation error in get_schedules: {e.message}")
+        raise HTTPException(status_code=400, detail=e.message)
+    except ValueError as e:
+        # Handle legacy ValueError exceptions as validation errors
+        logger.warning(f"Validation error in get_schedules: {e}")
+        error_msg = str(e)
+
+        # Provide helpful error messages for common validation issues
+        if "Date filter" in error_msg and "required" in error_msg:
+            detail = "Date filter is required. Please provide either 'date_from', 'date_to', or 'date' parameter."
+        elif "Date range cannot exceed" in error_msg:
+            detail = "Date range is too large. Maximum allowed range is 6 months (180 days)."
+        elif "Invalid date" in error_msg and "format" in error_msg:
+            detail = "Invalid date format. Please use ISO 8601 format (YYYY-MM-DDTHH:MM:SS) or YYYY-MM-DD for date-only."
+        elif "Limit must be between" in error_msg:
+            detail = "Invalid limit parameter. Must be between 1 and 1000."
+        elif "Offset must be non-negative" in error_msg:
+            detail = "Invalid offset parameter. Must be 0 or greater."
         else:
-            schedules = await schedule_service.get_all_schedules()
+            detail = f"Validation error: {error_msg}"
 
-            # Apply additional filters
-            if cinema_number:
-                schedules = [s for s in schedules if s.get("cinema_number") == cinema_number]
-
-            if movie_id:
-                schedules = [s for s in schedules if s.get("movie_id") == movie_id]
-
-            return schedules
+        raise HTTPException(status_code=400, detail=detail)
+    except BusinessLogicError as e:
+        logger.warning(f"Business logic error in get_schedules: {e.message}")
+        raise HTTPException(status_code=422, detail=e.message)
+    except ResourceNotFoundError as e:
+        logger.warning(f"Resource not found in get_schedules: {e.message}")
+        raise HTTPException(status_code=404, detail=e.message)
     except Exception as e:
-        logger.error(f"Error getting schedules: {e}")
+        logger.error(f"Unexpected error getting schedules: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/{schedule_id}", response_model=Dict[str, Any])
@@ -65,8 +120,17 @@ async def get_schedule(schedule_id: str, db: Session = Depends(get_db)):
         return schedule
     except HTTPException:
         raise
+    except ResourceNotFoundError as e:
+        logger.warning(f"Resource not found in get_schedule: {e.message}")
+        raise HTTPException(status_code=404, detail=e.message)
+    except ValidationError as e:
+        logger.warning(f"Validation error in get_schedule: {e.message}")
+        raise HTTPException(status_code=400, detail=e.message)
+    except ValueError as e:
+        logger.warning(f"Validation error in get_schedule: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid schedule ID format: {e}")
     except Exception as e:
-        logger.error(f"Error getting schedule {schedule_id}: {e}")
+        logger.error(f"Unexpected error getting schedule {schedule_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("", response_model=Dict[str, Any])
@@ -85,10 +149,26 @@ async def create_schedule(schedule_data: ScheduleCreate, db: Session = Depends(g
         return await schedule_service.create_schedule(**schedule_dict)
     except HTTPException:
         raise
+    except ConflictError as e:
+        logger.warning(f"Schedule conflict in create_schedule: {e.message}")
+        raise HTTPException(status_code=409, detail=e.message)
+    except ValidationError as e:
+        logger.warning(f"Validation error in create_schedule: {e.message}")
+        raise HTTPException(status_code=400, detail=e.message)
+    except ValueError as e:
+        logger.warning(f"Validation error in create_schedule: {e}")
+        error_msg = str(e)
+        if "conflict" in error_msg.lower():
+            raise HTTPException(status_code=409, detail=f"Schedule conflict: {error_msg}")
+        elif "not found" in error_msg.lower():
+            raise HTTPException(status_code=404, detail=error_msg)
+        else:
+            raise HTTPException(status_code=400, detail=f"Validation error: {error_msg}")
+    except ResourceNotFoundError as e:
+        logger.warning(f"Resource not found in create_schedule: {e.message}")
+        raise HTTPException(status_code=404, detail=e.message)
     except Exception as e:
-        logger.error(f"Error creating schedule: {e}")
-        if "conflict" in str(e).lower():
-            raise HTTPException(status_code=409, detail="Schedule conflict detected")
+        logger.error(f"Unexpected error creating schedule: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.put("/{schedule_id}", response_model=Dict[str, Any])
@@ -118,10 +198,26 @@ async def update_schedule(
         return await schedule_service.update_schedule(schedule_id, **update_dict)
     except HTTPException:
         raise
+    except ConflictError as e:
+        logger.warning(f"Schedule conflict in update_schedule: {e.message}")
+        raise HTTPException(status_code=409, detail=e.message)
+    except ValidationError as e:
+        logger.warning(f"Validation error in update_schedule: {e.message}")
+        raise HTTPException(status_code=400, detail=e.message)
+    except ValueError as e:
+        logger.warning(f"Validation error in update_schedule: {e}")
+        error_msg = str(e)
+        if "conflict" in error_msg.lower():
+            raise HTTPException(status_code=409, detail=f"Schedule conflict: {error_msg}")
+        elif "not found" in error_msg.lower():
+            raise HTTPException(status_code=404, detail=error_msg)
+        else:
+            raise HTTPException(status_code=400, detail=f"Validation error: {error_msg}")
+    except ResourceNotFoundError as e:
+        logger.warning(f"Resource not found in update_schedule: {e.message}")
+        raise HTTPException(status_code=404, detail=e.message)
     except Exception as e:
-        logger.error(f"Error updating schedule {schedule_id}: {e}")
-        if "conflict" in str(e).lower():
-            raise HTTPException(status_code=409, detail="Schedule conflict detected")
+        logger.error(f"Unexpected error updating schedule {schedule_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.delete("/{schedule_id}")
@@ -139,8 +235,20 @@ async def cancel_schedule(schedule_id: str, db: Session = Depends(get_db)):
         return {"message": "Schedule cancelled successfully"}
     except HTTPException:
         raise
+    except ResourceNotFoundError as e:
+        logger.warning(f"Resource not found in cancel_schedule: {e.message}")
+        raise HTTPException(status_code=404, detail=e.message)
+    except ValidationError as e:
+        logger.warning(f"Validation error in cancel_schedule: {e.message}")
+        raise HTTPException(status_code=400, detail=e.message)
+    except ValueError as e:
+        logger.warning(f"Validation error in cancel_schedule: {e}")
+        if "not found" in str(e).lower():
+            raise HTTPException(status_code=404, detail=str(e))
+        else:
+            raise HTTPException(status_code=400, detail=f"Validation error: {e}")
     except Exception as e:
-        logger.error(f"Error cancelling schedule {schedule_id}: {e}")
+        logger.error(f"Unexpected error cancelling schedule {schedule_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/availability/time-slots")
@@ -153,8 +261,14 @@ async def get_available_time_slots(
     try:
         schedule_service = ScheduleService(db)
         return await schedule_service.get_available_time_slots(date, cinema_number)
+    except ValidationError as e:
+        logger.warning(f"Validation error in get_available_time_slots: {e.message}")
+        raise HTTPException(status_code=400, detail=e.message)
+    except ValueError as e:
+        logger.warning(f"Validation error in get_available_time_slots: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {e}")
     except Exception as e:
-        logger.error(f"Error getting available time slots for {date}: {e}")
+        logger.error(f"Unexpected error getting available time slots for {date}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/conflicts/check")
@@ -190,8 +304,14 @@ async def check_schedule_conflicts(
         }
     except HTTPException:
         raise
+    except ValidationError as e:
+        logger.warning(f"Validation error in check_schedule_conflicts: {e.message}")
+        raise HTTPException(status_code=400, detail=e.message)
+    except ValueError as e:
+        logger.warning(f"Validation error in check_schedule_conflicts: {e}")
+        raise HTTPException(status_code=400, detail=f"Validation error: {e}")
     except Exception as e:
-        logger.error(f"Error checking schedule conflicts: {e}")
+        logger.error(f"Unexpected error checking schedule conflicts: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/cinema/{cinema_number}/schedule")
@@ -208,8 +328,9 @@ async def get_cinema_schedule(
             schedules = await schedule_service.get_schedules_by_date(date)
             schedules = [s for s in schedules if s.get("cinema_number") == cinema_number]
         else:
-            schedules = await schedule_service.get_all_schedules()
-            schedules = [s for s in schedules if s.get("cinema_number") == cinema_number]
+            # Use the new paginated API with date filter disabled for backward compatibility
+            result = await schedule_service.get_all_schedules(require_date_filter=False)
+            schedules = [s for s in result["data"] if s.get("cinema_number") == cinema_number]
 
         return {
             "cinema_number": cinema_number,
@@ -217,6 +338,12 @@ async def get_cinema_schedule(
             "schedules": schedules,
             "total_schedules": len(schedules)
         }
+    except ValidationError as e:
+        logger.warning(f"Validation error in get_cinema_schedule: {e.message}")
+        raise HTTPException(status_code=400, detail=e.message)
+    except ValueError as e:
+        logger.warning(f"Validation error in get_cinema_schedule: {e}")
+        raise HTTPException(status_code=400, detail=f"Validation error: {e}")
     except Exception as e:
-        logger.error(f"Error getting cinema {cinema_number} schedule: {e}")
+        logger.error(f"Unexpected error getting cinema {cinema_number} schedule: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")

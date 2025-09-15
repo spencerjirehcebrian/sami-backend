@@ -22,19 +22,53 @@ class ScheduleService:
         date_from: str = None,
         date_to: str = None,
         cinema_id: str = None,
-        movie_id: str = None
-    ) -> List[Dict[str, Any]]:
-        """Get schedules with optional filtering"""
+        movie_id: str = None,
+        limit: int = 100,
+        offset: int = 0,
+        require_date_filter: bool = True
+    ) -> Dict[str, Any]:
+        """Get schedules with optional filtering, pagination, and safety guards"""
         try:
-            query = self.db.query(Schedule).join(Movie).join(Cinema).join(CinemaType)
+            # Validate datetime formats early
+            date_from_parsed = None
+            date_to_parsed = None
 
-            # Apply filters
             if date_from:
-                date_from_parsed = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
-                query = query.filter(Schedule.time_slot >= date_from_parsed)
+                try:
+                    date_from_parsed = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+                except ValueError:
+                    raise ValueError(f"Invalid date_from format: {date_from}. Use ISO 8601 format.")
 
             if date_to:
-                date_to_parsed = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+                try:
+                    date_to_parsed = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+                except ValueError:
+                    raise ValueError(f"Invalid date_to format: {date_to}. Use ISO 8601 format.")
+
+            # Validate date range - maximum 6 months
+            if date_from_parsed and date_to_parsed:
+                date_range = date_to_parsed - date_from_parsed
+                if date_range.days > 180:  # 6 months
+                    raise ValueError("Date range cannot exceed 6 months (180 days)")
+
+            # Require date filters for large datasets (unless explicitly disabled)
+            if require_date_filter and not (date_from or date_to):
+                raise ValueError("Date filter (date_from or date_to) is required for schedule queries")
+
+            # Validate pagination parameters
+            if limit < 1 or limit > 1000:
+                raise ValueError("Limit must be between 1 and 1000")
+            if offset < 0:
+                raise ValueError("Offset must be non-negative")
+
+            # Build query with filters
+            query = self.db.query(Schedule).join(Movie).join(Cinema).join(CinemaType)
+
+            # Apply date filters
+            if date_from_parsed:
+                query = query.filter(Schedule.time_slot >= date_from_parsed)
+
+            if date_to_parsed:
                 query = query.filter(Schedule.time_slot <= date_to_parsed)
 
             if cinema_id:
@@ -43,8 +77,14 @@ class ScheduleService:
             if movie_id:
                 query = query.filter(Schedule.movie_id == movie_id)
 
-            schedules = query.all()
-            return [
+            # Get total count before pagination
+            total_count = query.count()
+
+            # Apply pagination
+            schedules = query.offset(offset).limit(limit).all()
+
+            # Build schedule data
+            schedule_data = [
                 {
                     "id": str(schedule.id),
                     "movie_id": str(schedule.movie_id),
@@ -70,6 +110,25 @@ class ScheduleService:
                 }
                 for schedule in schedules
             ]
+
+            # Calculate pagination metadata
+            has_next = (offset + limit) < total_count
+            has_prev = offset > 0
+            total_pages = (total_count + limit - 1) // limit  # Ceiling division
+            current_page = (offset // limit) + 1
+
+            return {
+                "data": schedule_data,
+                "pagination": {
+                    "total_count": total_count,
+                    "limit": limit,
+                    "offset": offset,
+                    "current_page": current_page,
+                    "total_pages": total_pages,
+                    "has_next": has_next,
+                    "has_prev": has_prev
+                }
+            }
         except Exception as e:
             logger.error(f"Error getting schedules: {e}")
             raise
@@ -340,10 +399,12 @@ class ScheduleService:
             start_of_day = datetime.combine(target_date, datetime.min.time())
             end_of_day = datetime.combine(target_date, datetime.max.time())
 
-            return await self.get_all_schedules(
+            result = await self.get_all_schedules(
                 date_from=start_of_day.isoformat(),
-                date_to=end_of_day.isoformat()
+                date_to=end_of_day.isoformat(),
+                require_date_filter=False  # Don't require additional date filters since we're providing them
             )
+            return result["data"]  # Return just the data for backward compatibility
         except Exception as e:
             logger.error(f"Error getting schedules by date {date}: {e}")
             raise
