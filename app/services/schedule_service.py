@@ -5,6 +5,7 @@ from app.database import get_db
 from app.models.schedule import Schedule
 from app.models.movie import Movie
 from app.models.cinema import Cinema, CinemaType
+from app.notifications.broadcaster import broadcaster
 from datetime import datetime, timedelta
 import logging
 
@@ -187,6 +188,19 @@ class ScheduleService:
             self.db.commit()
             self.db.refresh(schedule)
 
+            # Trigger notification
+            await broadcaster.broadcast_change(
+                entity_type="schedules",
+                operation="create",
+                entity_id=str(schedule.id),
+                data={
+                    "movie_id": str(schedule.movie_id),
+                    "cinema_id": str(schedule.cinema_id),
+                    "time_slot": schedule.time_slot.isoformat(),
+                    "unit_price": float(schedule.unit_price)
+                }
+            )
+
             # Get the full schedule details for response
             full_schedule = await self.get_schedule_by_id(str(schedule.id))
             full_schedule["message"] = f"Schedule created for {movie.title} in Cinema {cinema.number} at {time_slot_parsed.strftime('%Y-%m-%d %H:%M')}"
@@ -264,6 +278,20 @@ class ScheduleService:
             self.db.commit()
             self.db.refresh(schedule)
 
+            # Trigger notification
+            await broadcaster.broadcast_change(
+                entity_type="schedules",
+                operation="update",
+                entity_id=schedule_id,
+                data={
+                    "movie_id": str(schedule.movie_id),
+                    "cinema_id": str(schedule.cinema_id),
+                    "time_slot": schedule.time_slot.isoformat(),
+                    "unit_price": float(schedule.unit_price),
+                    "status": schedule.status
+                }
+            )
+
             full_schedule = await self.get_schedule_by_id(str(schedule.id))
             full_schedule["message"] = f"Schedule updated successfully"
 
@@ -282,6 +310,18 @@ class ScheduleService:
 
             schedule.status = "cancelled"
             self.db.commit()
+
+            # Trigger notification
+            await broadcaster.broadcast_change(
+                entity_type="schedules",
+                operation="delete",
+                entity_id=schedule_id,
+                data={
+                    "cinema_id": str(schedule.cinema_id),
+                    "time_slot": schedule.time_slot.isoformat(),
+                    "status": "cancelled"
+                }
+            )
 
             return {
                 "id": str(schedule.id),

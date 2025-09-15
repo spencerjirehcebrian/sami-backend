@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
 from app.database import get_db
 from app.models.movie import Movie
+from app.notifications.broadcaster import broadcaster
 from datetime import datetime
 import logging
 
@@ -139,6 +140,18 @@ class MovieService:
             self.db.commit()
             self.db.refresh(movie)
 
+            # Trigger notification
+            await broadcaster.broadcast_change(
+                entity_type="movies",
+                operation="create",
+                entity_id=str(movie.id),
+                data={
+                    "title": movie.title,
+                    "genre": movie.genre,
+                    "rating": movie.rating
+                }
+            )
+
             return {
                 "id": str(movie.id),
                 "title": movie.title,
@@ -203,6 +216,18 @@ class MovieService:
             self.db.commit()
             self.db.refresh(movie)
 
+            # Trigger notification
+            await broadcaster.broadcast_change(
+                entity_type="movies",
+                operation="update",
+                entity_id=movie_id,
+                data={
+                    "title": movie.title,
+                    "genre": movie.genre,
+                    "rating": movie.rating
+                }
+            )
+
             return {
                 "id": str(movie.id),
                 "title": movie.title,
@@ -234,6 +259,16 @@ class MovieService:
             movie_title = movie.title
             self.db.delete(movie)
             self.db.commit()
+
+            # Trigger notification
+            await broadcaster.broadcast_change(
+                entity_type="movies",
+                operation="delete",
+                entity_id=movie_id,
+                data={
+                    "title": movie_title
+                }
+            )
 
             return {
                 "id": movie_id,

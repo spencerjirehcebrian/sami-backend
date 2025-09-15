@@ -2,6 +2,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.websocket.manager import websocket_router
+from app.api.movies import router as movies_router
+from app.api.cinemas import router as cinemas_router
+from app.api.schedules import router as schedules_router
+from app.api.analytics import router as analytics_router
+from app.notifications.events import setup_database_event_handlers
 
 app = FastAPI(title="SAMi Backend API", version="1.0.0", description="Cinema Schedule Management AI Backend")
 
@@ -16,6 +21,15 @@ app.add_middleware(
 
 # Include WebSocket router
 app.include_router(websocket_router)
+
+# Include REST API routers
+app.include_router(movies_router)
+app.include_router(cinemas_router)
+app.include_router(schedules_router)
+app.include_router(analytics_router)
+
+# Setup database event handlers for notifications
+setup_database_event_handlers()
 
 # Health check endpoint
 @app.get("/health")

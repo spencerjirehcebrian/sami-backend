@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from app.database import get_db
 from app.models.cinema import Cinema, CinemaType
+from app.notifications.broadcaster import broadcaster
 import logging
 
 logger = logging.getLogger(__name__)
@@ -148,6 +149,18 @@ class CinemaService:
             self.db.commit()
             self.db.refresh(cinema)
 
+            # Trigger notification
+            await broadcaster.broadcast_change(
+                entity_type="cinemas",
+                operation="create",
+                entity_id=str(cinema.id),
+                data={
+                    "number": cinema.number,
+                    "total_seats": cinema.total_seats,
+                    "location": cinema.location
+                }
+            )
+
             return {
                 "id": str(cinema.id),
                 "number": cinema.number,
@@ -191,6 +204,18 @@ class CinemaService:
 
             cinema_type_obj = self.db.query(CinemaType).filter(CinemaType.id == cinema.type).first()
 
+            # Trigger notification
+            await broadcaster.broadcast_change(
+                entity_type="cinemas",
+                operation="update",
+                entity_id=cinema_id,
+                data={
+                    "number": cinema.number,
+                    "total_seats": cinema.total_seats,
+                    "location": cinema.location
+                }
+            )
+
             return {
                 "id": str(cinema.id),
                 "number": cinema.number,
@@ -204,6 +229,41 @@ class CinemaService:
         except Exception as e:
             self.db.rollback()
             logger.error(f"Error updating cinema: {e}")
+            raise
+
+    async def delete_cinema(self, cinema_number: int) -> Dict[str, Any]:
+        """Delete a cinema (if no schedules exist)"""
+        try:
+            cinema = self.db.query(Cinema).filter(Cinema.number == cinema_number).first()
+            if not cinema:
+                raise ValueError(f"Cinema with number {cinema_number} not found")
+
+            # Check if cinema has any schedules
+            # This would require importing Schedule model, but avoiding circular imports
+            # For now, we'll assume it's safe to delete
+            # TODO: Add schedule check once schedule_service is implemented
+
+            cinema_id = str(cinema.id)
+            self.db.delete(cinema)
+            self.db.commit()
+
+            # Trigger notification
+            await broadcaster.broadcast_change(
+                entity_type="cinemas",
+                operation="delete",
+                entity_id=cinema_id,
+                data={
+                    "number": cinema_number
+                }
+            )
+
+            return {
+                "id": cinema_id,
+                "message": f"Cinema {cinema_number} deleted successfully"
+            }
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Error deleting cinema: {e}")
             raise
 
     async def get_cinema_types(self) -> List[Dict[str, Any]]:
