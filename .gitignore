@@ -177,3 +177,6 @@ Thumbs.db
 *.tmp
 *.temp
 test_*.py
+
+# Test output`
+test_report.txt

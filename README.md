@@ -23,7 +23,7 @@ FastAPI backend for cinema schedule management system with AI-powered natural la
    ```
    DATABASE_URL=postgresql://user:pass@host:port/db
    GEMINI_API_KEY=your_api_key
-   CORS_ORIGINS=http://localhost:3000
+   CORS_ORIGINS=["http://localhost:3000"]
    ```
 
 3. Run database migrations:
