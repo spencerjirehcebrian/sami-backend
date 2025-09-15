@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 from app.config import settings
 from app.websocket.manager import websocket_router
 from app.api.movies import router as movies_router
@@ -7,8 +8,28 @@ from app.api.cinemas import router as cinemas_router
 from app.api.schedules import router as schedules_router
 from app.api.analytics import router as analytics_router
 from app.notifications.events import setup_database_event_handlers
+from app.database import test_db_connection, get_db_health
+import logging
 
-app = FastAPI(title="SAMi Backend API", version="1.0.0", description="Cinema Schedule Management AI Backend")
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info("Starting SAMi Backend API...")
+    await test_db_connection()
+    yield
+    # Shutdown
+    logger.info("Shutting down SAMi Backend API...")
+
+
+app = FastAPI(
+    title="SAMi Backend API",
+    version="1.0.0",
+    description="Cinema Schedule Management AI Backend",
+    lifespan=lifespan
+)
 
 # CORS for Next.js frontend
 app.add_middleware(
@@ -34,10 +55,14 @@ setup_database_event_handlers()
 # Health check endpoint
 @app.get("/health")
 async def health_check():
+    db_health = get_db_health()
+    overall_status = "healthy" if db_health["status"] == "healthy" else "unhealthy"
+
     return {
-        "status": "healthy",
+        "status": overall_status,
         "version": "1.0.0",
-        "service": "SAMi Backend API"
+        "service": "SAMi Backend API",
+        "database": db_health
     }
 
 # Root endpoint
