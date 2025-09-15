@@ -26,7 +26,7 @@ class MovieUpdate(BaseModel):
     description: Optional[str] = None
     release_date: Optional[str] = None
 
-@router.get("/", response_model=List[Dict[str, Any]])
+@router.get("", response_model=List[Dict[str, Any]])
 async def get_movies(
     genre: Optional[str] = Query(None, description="Filter by genre"),
     rating: Optional[str] = Query(None, description="Filter by rating"),
@@ -65,7 +65,7 @@ async def get_movie(movie_id: str, db: Session = Depends(get_db)):
         logger.error(f"Error getting movie {movie_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@router.post("/", response_model=Dict[str, Any])
+@router.post("", response_model=Dict[str, Any])
 async def create_movie(movie_data: MovieCreate, db: Session = Depends(get_db)):
     """Create a new movie"""
     try:

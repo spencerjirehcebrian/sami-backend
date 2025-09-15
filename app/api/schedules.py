@@ -26,7 +26,7 @@ class ScheduleUpdate(BaseModel):
     expected_attendance: Optional[int] = None
     actual_attendance: Optional[int] = None
 
-@router.get("/", response_model=List[Dict[str, Any]])
+@router.get("", response_model=List[Dict[str, Any]])
 async def get_schedules(
     date: Optional[str] = Query(None, description="Filter by date (YYYY-MM-DD)"),
     cinema_number: Optional[int] = Query(None, description="Filter by cinema number"),
@@ -69,7 +69,7 @@ async def get_schedule(schedule_id: str, db: Session = Depends(get_db)):
         logger.error(f"Error getting schedule {schedule_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@router.post("/", response_model=Dict[str, Any])
+@router.post("", response_model=Dict[str, Any])
 async def create_schedule(schedule_data: ScheduleCreate, db: Session = Depends(get_db)):
     """Create a new schedule"""
     try:

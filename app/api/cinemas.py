@@ -24,7 +24,7 @@ class CinemaUpdate(BaseModel):
     location: Optional[str] = None
     features: Optional[str] = None
 
-@router.get("/", response_model=List[Dict[str, Any]])
+@router.get("", response_model=List[Dict[str, Any]])
 async def get_cinemas(
     cinema_type: Optional[str] = Query(None, description="Filter by cinema type"),
     available_only: Optional[bool] = Query(False, description="Show only available cinemas"),
@@ -73,7 +73,7 @@ async def get_cinema(cinema_number: int, db: Session = Depends(get_db)):
         logger.error(f"Error getting cinema {cinema_number}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@router.post("/", response_model=Dict[str, Any])
+@router.post("", response_model=Dict[str, Any])
 async def create_cinema(cinema_data: CinemaCreate, db: Session = Depends(get_db)):
     """Create a new cinema"""
     try:
