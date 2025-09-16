@@ -1,16 +1,65 @@
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.services.schedule_service import ScheduleService
 from app.exceptions import ValidationError, BusinessLogicError, ResourceNotFoundError, ConflictError
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Iterator
 from pydantic import BaseModel
 from datetime import datetime
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/schedules", tags=["schedules"])
+
+def _filter_fields(data: List[Dict[str, Any]], fields: List[str]) -> List[Dict[str, Any]]:
+    """Filter response data to only include specified fields"""
+    if not fields or not data:
+        return data
+
+    filtered_data = []
+    for item in data:
+        filtered_item = {}
+        for field in fields:
+            if field in item:
+                filtered_item[field] = item[field]
+        filtered_data.append(filtered_item)
+
+    return filtered_data
+
+def _generate_pagination_links(offset: int, limit: int, total_count: int, base_url: str) -> Dict[str, str]:
+    """Generate pagination links for response headers"""
+    links = {}
+
+    # First page
+    links["first"] = f"{base_url}?offset=0&limit={limit}"
+
+    # Previous page
+    if offset > 0:
+        prev_offset = max(0, offset - limit)
+        links["prev"] = f"{base_url}?offset={prev_offset}&limit={limit}"
+
+    # Next page
+    if offset + limit < total_count:
+        next_offset = offset + limit
+        links["next"] = f"{base_url}?offset={next_offset}&limit={limit}"
+
+    # Last page
+    last_offset = max(0, ((total_count - 1) // limit) * limit)
+    links["last"] = f"{base_url}?offset={last_offset}&limit={limit}"
+
+    return links
+
+def _stream_json_array(data: List[Dict[str, Any]]) -> Iterator[str]:
+    """Generate streaming JSON array response"""
+    yield "["
+    for i, item in enumerate(data):
+        if i > 0:
+            yield ","
+        yield json.dumps(item, default=str)
+    yield "]"
 
 class ScheduleCreate(BaseModel):
     movie_id: str
@@ -29,6 +78,7 @@ class ScheduleUpdate(BaseModel):
 
 @router.get("", response_model=Dict[str, Any])
 async def get_schedules(
+    response: Response,
     date_from: Optional[str] = Query(None, description="Filter from date (ISO format)"),
     date_to: Optional[str] = Query(None, description="Filter to date (ISO format)"),
     date: Optional[str] = Query(None, description="Filter by date (YYYY-MM-DD) - legacy parameter"),
@@ -39,6 +89,9 @@ async def get_schedules(
     offset: int = Query(0, ge=0, description="Number of records to skip"),
     page: Optional[int] = Query(None, ge=1, description="Page number (alternative to offset)"),
     require_date_filter: bool = Query(True, description="Require date filter for large queries"),
+    expand: Optional[str] = Query(None, description="Expand related data (details, all)"),
+    fields: Optional[str] = Query(None, description="Comma-separated list of fields to include"),
+    response_mode: Optional[str] = Query("default", description="Response mode: summary, default, or detailed"),
     db: Session = Depends(get_db)
 ):
     """Get all schedules with optional filtering, pagination, and safety guards"""
@@ -67,15 +120,84 @@ async def get_schedules(
             if cinema:
                 actual_cinema_id = str(cinema.id)
 
-        return await schedule_service.get_all_schedules(
-            date_from=date_from,
-            date_to=date_to,
-            cinema_id=actual_cinema_id,
-            movie_id=movie_id,
-            limit=limit,
-            offset=offset,
-            require_date_filter=require_date_filter
-        )
+        # Determine which query method to use based on response_mode
+        if response_mode == "summary" or (not expand and not fields):
+            # Use optimized summary method for lightweight responses
+            schedules_data = schedule_service.get_schedules_summary(
+                date_from=date_from,
+                date_to=date_to,
+                cinema_id=actual_cinema_id,
+                movie_id=movie_id,
+                limit=limit,
+                offset=offset
+            )
+
+            # Apply field filtering if requested
+            if fields:
+                field_list = [f.strip() for f in fields.split(',')]
+                schedules_data = _filter_fields(schedules_data, field_list)
+
+            # For summary mode, return simple list format
+            total_count = schedule_service.get_schedules_count(
+                date_from=date_from,
+                date_to=date_to,
+                cinema_id=actual_cinema_id,
+                movie_id=movie_id
+            )
+
+            # Add pagination headers
+            pagination_links = _generate_pagination_links(offset, limit, total_count, "/api/schedules")
+            if pagination_links:
+                link_header = ", ".join([f'<{url}>; rel="{rel}"' for rel, url in pagination_links.items()])
+                response.headers["Link"] = link_header
+
+            response.headers["X-Total-Count"] = str(total_count)
+            response.headers["X-Page-Size"] = str(limit)
+            response.headers["X-Page-Offset"] = str(offset)
+
+            return {
+                "schedules": schedules_data,
+                "pagination": {
+                    "total_count": total_count,
+                    "limit": limit,
+                    "offset": offset,
+                    "has_next": offset + limit < total_count
+                },
+                "response_mode": "summary"
+            }
+        else:
+            # Use full detailed method for complete responses
+            result = await schedule_service.get_all_schedules(
+                date_from=date_from,
+                date_to=date_to,
+                cinema_id=actual_cinema_id,
+                movie_id=movie_id,
+                limit=limit,
+                offset=offset,
+                require_date_filter=require_date_filter
+            )
+
+            # Apply field filtering if requested
+            if fields:
+                field_list = [f.strip() for f in fields.split(',')]
+                result["schedules"] = _filter_fields(result["schedules"], field_list)
+
+            # Add response mode indicator
+            result["response_mode"] = response_mode
+
+            # Add pagination headers for detailed responses too
+            if "pagination" in result:
+                total_count = result["pagination"]["total_count"]
+                pagination_links = _generate_pagination_links(offset, limit, total_count, "/api/schedules")
+                if pagination_links:
+                    link_header = ", ".join([f'<{url}>; rel="{rel}"' for rel, url in pagination_links.items()])
+                    response.headers["Link"] = link_header
+
+                response.headers["X-Total-Count"] = str(total_count)
+                response.headers["X-Page-Size"] = str(limit)
+                response.headers["X-Page-Offset"] = str(offset)
+
+            return result
     except ValidationError as e:
         logger.warning(f"Validation error in get_schedules: {e.message}")
         raise HTTPException(status_code=400, detail=e.message)
@@ -167,6 +289,93 @@ async def get_schedules_for_export(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Unexpected error getting schedules for export: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/stream")
+async def stream_schedules(
+    date_from: Optional[str] = Query(None, description="Filter from date (ISO format)"),
+    date_to: Optional[str] = Query(None, description="Filter to date (ISO format)"),
+    cinema_id: Optional[str] = Query(None, description="Filter by cinema ID"),
+    movie_id: Optional[str] = Query(None, description="Filter by movie ID"),
+    fields: Optional[str] = Query(None, description="Comma-separated list of fields to include"),
+    chunk_size: int = Query(100, ge=10, le=1000, description="Number of records per chunk"),
+    db: Session = Depends(get_db)
+):
+    """Stream schedules for large datasets - returns chunked JSON array"""
+    try:
+        schedule_service = ScheduleService(db)
+
+        def generate_stream():
+            offset = 0
+            yield "{"
+            yield '"schedules": ['
+
+            first_chunk = True
+            while True:
+                # Get chunk of data using summary method for better performance
+                chunk_data = schedule_service.get_schedules_summary(
+                    date_from=date_from,
+                    date_to=date_to,
+                    cinema_id=cinema_id,
+                    movie_id=movie_id,
+                    limit=chunk_size,
+                    offset=offset
+                )
+
+                if not chunk_data:
+                    break
+
+                # Apply field filtering if requested
+                if fields:
+                    field_list = [f.strip() for f in fields.split(',')]
+                    chunk_data = _filter_fields(chunk_data, field_list)
+
+                # Stream each item in the chunk
+                for i, item in enumerate(chunk_data):
+                    if not first_chunk or i > 0:
+                        yield ","
+                    yield json.dumps(item, default=str)
+
+                first_chunk = False
+
+                # If we got less than the chunk size, we're done
+                if len(chunk_data) < chunk_size:
+                    break
+
+                offset += chunk_size
+
+            yield '],'
+
+            # Add metadata
+            total_count = schedule_service.get_schedules_count(
+                date_from=date_from,
+                date_to=date_to,
+                cinema_id=cinema_id,
+                movie_id=movie_id
+            )
+
+            yield f'"total_count": {total_count},'
+            yield f'"chunk_size": {chunk_size},'
+            yield '"response_type": "streaming"'
+            yield "}"
+
+        return StreamingResponse(
+            generate_stream(),
+            media_type="application/json",
+            headers={
+                "Content-Disposition": "attachment; filename=schedules.json",
+                "X-Stream-Type": "chunked-json"
+            }
+        )
+
+    except ValidationError as e:
+        logger.warning(f"Validation error in stream_schedules: {e.message}")
+        raise HTTPException(status_code=400, detail=e.message)
+    except ValueError as e:
+        logger.warning(f"Validation error in stream_schedules: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error streaming schedules: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/{schedule_id}", response_model=Dict[str, Any])
