@@ -193,7 +193,7 @@ class ScheduleService:
             logger.error(f"Error getting schedule by ID {schedule_id}: {e}")
             raise
 
-    async def get_schedules_summary(
+    def get_schedules_summary(
         self,
         date_from: str = None,
         date_to: str = None,
@@ -268,7 +268,7 @@ class ScheduleService:
             logger.error(f"Error getting schedule summaries: {e}")
             raise
 
-    async def get_schedules_for_export(
+    def get_schedules_for_export(
         self,
         date_from: str = None,
         date_to: str = None,
