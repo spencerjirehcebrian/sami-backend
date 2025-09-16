@@ -23,96 +23,115 @@ class AnalyticsService:
         cinema_id: str = None,
         movie_id: str = None
     ) -> Dict[str, Any]:
-        """Generate revenue report with various breakdowns"""
+        """Generate revenue report with SQL aggregations for optimal performance"""
         try:
-            query = self.db.query(Schedule).join(Movie).join(Cinema).join(CinemaType)
-
-            # Apply filters
+            # Parse and validate date filters
             if date_from:
                 date_from_parsed = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
-                query = query.filter(Schedule.time_slot >= date_from_parsed)
             else:
                 # Default to last 30 days
                 date_from_parsed = datetime.now() - timedelta(days=30)
-                query = query.filter(Schedule.time_slot >= date_from_parsed)
 
             if date_to:
                 date_to_parsed = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
-                query = query.filter(Schedule.time_slot <= date_to_parsed)
+            else:
+                date_to_parsed = datetime.now()
+
+            # Build base filter conditions for reuse
+            filter_conditions = [
+                Schedule.time_slot >= date_from_parsed,
+                Schedule.time_slot <= date_to_parsed
+            ]
 
             if cinema_id:
-                query = query.filter(Schedule.cinema_id == cinema_id)
-
+                filter_conditions.append(Schedule.cinema_id == cinema_id)
             if movie_id:
-                query = query.filter(Schedule.movie_id == movie_id)
+                filter_conditions.append(Schedule.movie_id == movie_id)
 
-            schedules = query.all()
+            # Overall summary with SQL aggregations
+            summary_query = self.db.query(
+                func.sum((Schedule.unit_price + Schedule.service_fee) * Schedule.current_sales).label('total_revenue'),
+                func.sum(Schedule.current_sales).label('total_tickets_sold'),
+                func.sum(Schedule.max_sales).label('total_possible_tickets'),
+                func.count(Schedule.id).label('total_showings')
+            ).filter(and_(*filter_conditions))
 
-            # Calculate total revenue
-            total_revenue = sum(
-                (schedule.unit_price + schedule.service_fee) * schedule.current_sales
-                for schedule in schedules
-            )
+            summary_result = summary_query.first()
 
-            total_tickets_sold = sum(schedule.current_sales for schedule in schedules)
-            total_possible_tickets = sum(schedule.max_sales for schedule in schedules)
+            total_revenue = float(summary_result.total_revenue or 0)
+            total_tickets_sold = int(summary_result.total_tickets_sold or 0)
+            total_possible_tickets = int(summary_result.total_possible_tickets or 0)
+            total_showings = int(summary_result.total_showings or 0)
 
-            # Revenue by cinema
-            cinema_revenue = {}
-            for schedule in schedules:
-                cinema_key = f"Cinema {schedule.cinema.number}"
-                revenue = (schedule.unit_price + schedule.service_fee) * schedule.current_sales
-                if cinema_key not in cinema_revenue:
-                    cinema_revenue[cinema_key] = {
-                        "cinema_id": str(schedule.cinema_id),
-                        "cinema_number": schedule.cinema.number,
-                        "revenue": 0,
-                        "tickets_sold": 0
-                    }
-                cinema_revenue[cinema_key]["revenue"] += revenue
-                cinema_revenue[cinema_key]["tickets_sold"] += schedule.current_sales
+            # Cinema breakdown with SQL GROUP BY
+            cinema_breakdown = self.db.query(
+                Cinema.id.label('cinema_id'),
+                Cinema.number.label('cinema_number'),
+                func.sum((Schedule.unit_price + Schedule.service_fee) * Schedule.current_sales).label('revenue'),
+                func.sum(Schedule.current_sales).label('tickets_sold')
+            ).join(Schedule).filter(and_(*filter_conditions)).group_by(
+                Cinema.id, Cinema.number
+            ).order_by(func.sum((Schedule.unit_price + Schedule.service_fee) * Schedule.current_sales).desc()).all()
 
-            # Revenue by movie
-            movie_revenue = {}
-            for schedule in schedules:
-                movie_title = schedule.movie.title
-                revenue = (schedule.unit_price + schedule.service_fee) * schedule.current_sales
-                if movie_title not in movie_revenue:
-                    movie_revenue[movie_title] = {
-                        "movie_id": str(schedule.movie_id),
-                        "title": movie_title,
-                        "genre": schedule.movie.genre,
-                        "revenue": 0,
-                        "tickets_sold": 0,
-                        "showings": 0
-                    }
-                movie_revenue[movie_title]["revenue"] += revenue
-                movie_revenue[movie_title]["tickets_sold"] += schedule.current_sales
-                movie_revenue[movie_title]["showings"] += 1
+            # Movie breakdown with SQL GROUP BY
+            movie_breakdown = self.db.query(
+                Movie.id.label('movie_id'),
+                Movie.title.label('title'),
+                Movie.genre.label('genre'),
+                func.sum((Schedule.unit_price + Schedule.service_fee) * Schedule.current_sales).label('revenue'),
+                func.sum(Schedule.current_sales).label('tickets_sold'),
+                func.count(Schedule.id).label('showings')
+            ).join(Schedule).filter(and_(*filter_conditions)).group_by(
+                Movie.id, Movie.title, Movie.genre
+            ).order_by(func.sum((Schedule.unit_price + Schedule.service_fee) * Schedule.current_sales).desc()).all()
 
-            # Daily revenue breakdown
-            daily_revenue = {}
-            for schedule in schedules:
-                date_key = schedule.time_slot.date().isoformat()
-                revenue = (schedule.unit_price + schedule.service_fee) * schedule.current_sales
-                if date_key not in daily_revenue:
-                    daily_revenue[date_key] = {
-                        "date": date_key,
-                        "revenue": 0,
-                        "tickets_sold": 0,
-                        "showings": 0
-                    }
-                daily_revenue[date_key]["revenue"] += revenue
-                daily_revenue[date_key]["tickets_sold"] += schedule.current_sales
-                daily_revenue[date_key]["showings"] += 1
+            # Daily breakdown with SQL GROUP BY using date functions
+            daily_breakdown = self.db.query(
+                func.date(Schedule.time_slot).label('date'),
+                func.sum((Schedule.unit_price + Schedule.service_fee) * Schedule.current_sales).label('revenue'),
+                func.sum(Schedule.current_sales).label('tickets_sold'),
+                func.count(Schedule.id).label('showings')
+            ).filter(and_(*filter_conditions)).group_by(
+                func.date(Schedule.time_slot)
+            ).order_by(func.date(Schedule.time_slot)).all()
 
-            # Sort daily revenue by date
-            daily_revenue_sorted = sorted(daily_revenue.values(), key=lambda x: x["date"])
+            # Format results
+            cinema_breakdown_formatted = [
+                {
+                    "cinema_id": str(row.cinema_id),
+                    "cinema_number": row.cinema_number,
+                    "revenue": round(float(row.revenue or 0), 2),
+                    "tickets_sold": int(row.tickets_sold or 0)
+                }
+                for row in cinema_breakdown
+            ]
+
+            movie_breakdown_formatted = [
+                {
+                    "movie_id": str(row.movie_id),
+                    "title": row.title,
+                    "genre": row.genre,
+                    "revenue": round(float(row.revenue or 0), 2),
+                    "tickets_sold": int(row.tickets_sold or 0),
+                    "showings": int(row.showings or 0)
+                }
+                for row in movie_breakdown
+            ]
+
+            daily_breakdown_formatted = [
+                {
+                    "date": row.date.isoformat() if row.date else None,
+                    "revenue": round(float(row.revenue or 0), 2),
+                    "tickets_sold": int(row.tickets_sold or 0),
+                    "showings": int(row.showings or 0)
+                }
+                for row in daily_breakdown
+            ]
 
             return {
                 "period": {
-                    "from": date_from if date_from else date_from_parsed.isoformat(),
-                    "to": date_to if date_to else datetime.now().isoformat()
+                    "from": date_from_parsed.isoformat(),
+                    "to": date_to_parsed.isoformat()
                 },
                 "summary": {
                     "total_revenue": round(total_revenue, 2),
@@ -120,11 +139,11 @@ class AnalyticsService:
                     "total_possible_tickets": total_possible_tickets,
                     "overall_occupancy_rate": round((total_tickets_sold / total_possible_tickets) * 100, 2) if total_possible_tickets > 0 else 0,
                     "average_ticket_price": round(total_revenue / total_tickets_sold, 2) if total_tickets_sold > 0 else 0,
-                    "total_showings": len(schedules)
+                    "total_showings": total_showings
                 },
-                "cinema_breakdown": list(cinema_revenue.values()),
-                "movie_breakdown": sorted(movie_revenue.values(), key=lambda x: x["revenue"], reverse=True),
-                "daily_breakdown": daily_revenue_sorted
+                "cinema_breakdown": cinema_breakdown_formatted,
+                "movie_breakdown": movie_breakdown_formatted,
+                "daily_breakdown": daily_breakdown_formatted
             }
         except Exception as e:
             logger.error(f"Error generating revenue report: {e}")
@@ -135,111 +154,135 @@ class AnalyticsService:
         date_from: str = None,
         date_to: str = None
     ) -> Dict[str, Any]:
-        """Generate occupancy analysis report"""
+        """Generate occupancy analysis report using SQL aggregations"""
         try:
-            query = self.db.query(Schedule).join(Movie).join(Cinema).join(CinemaType)
-
-            # Apply date filters
+            # Parse date filters
             if date_from:
                 date_from_parsed = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
-                query = query.filter(Schedule.time_slot >= date_from_parsed)
             else:
                 date_from_parsed = datetime.now() - timedelta(days=30)
-                query = query.filter(Schedule.time_slot >= date_from_parsed)
 
             if date_to:
                 date_to_parsed = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
-                query = query.filter(Schedule.time_slot <= date_to_parsed)
+            else:
+                date_to_parsed = datetime.now()
 
-            schedules = query.all()
+            # Base filter conditions
+            filter_conditions = [
+                Schedule.time_slot >= date_from_parsed,
+                Schedule.time_slot <= date_to_parsed
+            ]
 
-            # Overall occupancy stats
-            total_capacity = sum(schedule.max_sales for schedule in schedules)
-            total_sold = sum(schedule.current_sales for schedule in schedules)
+            # Overall occupancy stats with SQL aggregations
+            overall_stats = self.db.query(
+                func.sum(Schedule.max_sales).label('total_capacity'),
+                func.sum(Schedule.current_sales).label('total_sold'),
+                func.count(Schedule.id).label('total_showings')
+            ).filter(and_(*filter_conditions)).first()
+
+            total_capacity = int(overall_stats.total_capacity or 0)
+            total_sold = int(overall_stats.total_sold or 0)
+            total_showings = int(overall_stats.total_showings or 0)
             overall_occupancy = (total_sold / total_capacity) * 100 if total_capacity > 0 else 0
 
-            # Cinema occupancy rates
-            cinema_stats = {}
-            for schedule in schedules:
-                cinema_key = f"Cinema {schedule.cinema.number}"
-                if cinema_key not in cinema_stats:
-                    cinema_stats[cinema_key] = {
-                        "cinema_id": str(schedule.cinema_id),
-                        "cinema_number": schedule.cinema.number,
-                        "total_capacity": 0,
-                        "total_sold": 0,
-                        "showings": 0
-                    }
-                cinema_stats[cinema_key]["total_capacity"] += schedule.max_sales
-                cinema_stats[cinema_key]["total_sold"] += schedule.current_sales
-                cinema_stats[cinema_key]["showings"] += 1
+            # Cinema occupancy with SQL GROUP BY
+            cinema_occupancy = self.db.query(
+                Cinema.id.label('cinema_id'),
+                Cinema.number.label('cinema_number'),
+                func.sum(Schedule.max_sales).label('total_capacity'),
+                func.sum(Schedule.current_sales).label('total_sold'),
+                func.count(Schedule.id).label('showings')
+            ).join(Schedule).filter(and_(*filter_conditions)).group_by(
+                Cinema.id, Cinema.number
+            ).all()
 
-            # Calculate occupancy rates for cinemas
-            for cinema in cinema_stats.values():
-                cinema["occupancy_rate"] = round(
-                    (cinema["total_sold"] / cinema["total_capacity"]) * 100, 2
-                ) if cinema["total_capacity"] > 0 else 0
+            # Format cinema occupancy with calculated rates
+            cinema_occupancy_formatted = []
+            for row in cinema_occupancy:
+                capacity = int(row.total_capacity or 0)
+                sold = int(row.total_sold or 0)
+                occupancy_rate = round((sold / capacity) * 100, 2) if capacity > 0 else 0
 
-            # Time slot analysis (peak hours)
-            hourly_stats = {}
-            for schedule in schedules:
-                hour = schedule.time_slot.hour
-                if hour not in hourly_stats:
-                    hourly_stats[hour] = {
-                        "hour": f"{hour:02d}:00",
-                        "total_capacity": 0,
-                        "total_sold": 0,
-                        "showings": 0
-                    }
-                hourly_stats[hour]["total_capacity"] += schedule.max_sales
-                hourly_stats[hour]["total_sold"] += schedule.current_sales
-                hourly_stats[hour]["showings"] += 1
+                cinema_occupancy_formatted.append({
+                    "cinema_id": str(row.cinema_id),
+                    "cinema_number": row.cinema_number,
+                    "total_capacity": capacity,
+                    "total_sold": sold,
+                    "showings": int(row.showings or 0),
+                    "occupancy_rate": occupancy_rate
+                })
 
-            # Calculate occupancy rates for hours
-            hourly_occupancy = []
-            for hour_stat in hourly_stats.values():
-                hour_stat["occupancy_rate"] = round(
-                    (hour_stat["total_sold"] / hour_stat["total_capacity"]) * 100, 2
-                ) if hour_stat["total_capacity"] > 0 else 0
-                hourly_occupancy.append(hour_stat)
+            # Sort by occupancy rate
+            cinema_occupancy_formatted.sort(key=lambda x: x["occupancy_rate"], reverse=True)
 
-            hourly_occupancy.sort(key=lambda x: int(x["hour"].split(":")[0]))
+            # Hourly occupancy with SQL GROUP BY using EXTRACT
+            hourly_occupancy = self.db.query(
+                func.extract('hour', Schedule.time_slot).label('hour'),
+                func.sum(Schedule.max_sales).label('total_capacity'),
+                func.sum(Schedule.current_sales).label('total_sold'),
+                func.count(Schedule.id).label('showings')
+            ).filter(and_(*filter_conditions)).group_by(
+                func.extract('hour', Schedule.time_slot)
+            ).order_by(func.extract('hour', Schedule.time_slot)).all()
 
-            # Day of week analysis
-            weekday_stats = {}
-            for schedule in schedules:
-                weekday = schedule.time_slot.strftime("%A")
-                if weekday not in weekday_stats:
-                    weekday_stats[weekday] = {
-                        "day": weekday,
-                        "total_capacity": 0,
-                        "total_sold": 0,
-                        "showings": 0
-                    }
-                weekday_stats[weekday]["total_capacity"] += schedule.max_sales
-                weekday_stats[weekday]["total_sold"] += schedule.current_sales
-                weekday_stats[weekday]["showings"] += 1
+            # Format hourly occupancy
+            hourly_occupancy_formatted = []
+            for row in hourly_occupancy:
+                hour = int(row.hour)
+                capacity = int(row.total_capacity or 0)
+                sold = int(row.total_sold or 0)
+                occupancy_rate = round((sold / capacity) * 100, 2) if capacity > 0 else 0
 
-            # Calculate occupancy rates for weekdays
-            for day_stat in weekday_stats.values():
-                day_stat["occupancy_rate"] = round(
-                    (day_stat["total_sold"] / day_stat["total_capacity"]) * 100, 2
-                ) if day_stat["total_capacity"] > 0 else 0
+                hourly_occupancy_formatted.append({
+                    "hour": f"{hour:02d}:00",
+                    "total_capacity": capacity,
+                    "total_sold": sold,
+                    "showings": int(row.showings or 0),
+                    "occupancy_rate": occupancy_rate
+                })
+
+            # Weekday occupancy with SQL GROUP BY using date functions
+            weekday_occupancy = self.db.query(
+                func.extract('dow', Schedule.time_slot).label('day_of_week'),
+                func.sum(Schedule.max_sales).label('total_capacity'),
+                func.sum(Schedule.current_sales).label('total_sold'),
+                func.count(Schedule.id).label('showings')
+            ).filter(and_(*filter_conditions)).group_by(
+                func.extract('dow', Schedule.time_slot)
+            ).order_by(func.extract('dow', Schedule.time_slot)).all()
+
+            # Format weekday occupancy with day names
+            weekday_names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+            weekday_occupancy_formatted = []
+            for row in weekday_occupancy:
+                day_num = int(row.day_of_week)
+                day_name = weekday_names[day_num]
+                capacity = int(row.total_capacity or 0)
+                sold = int(row.total_sold or 0)
+                occupancy_rate = round((sold / capacity) * 100, 2) if capacity > 0 else 0
+
+                weekday_occupancy_formatted.append({
+                    "day": day_name,
+                    "total_capacity": capacity,
+                    "total_sold": sold,
+                    "showings": int(row.showings or 0),
+                    "occupancy_rate": occupancy_rate
+                })
 
             return {
                 "period": {
-                    "from": date_from if date_from else date_from_parsed.isoformat(),
-                    "to": date_to if date_to else datetime.now().isoformat()
+                    "from": date_from_parsed.isoformat(),
+                    "to": date_to_parsed.isoformat()
                 },
                 "overall_occupancy": {
                     "rate": round(overall_occupancy, 2),
                     "total_capacity": total_capacity,
                     "total_sold": total_sold,
-                    "total_showings": len(schedules)
+                    "total_showings": total_showings
                 },
-                "cinema_occupancy": sorted(cinema_stats.values(), key=lambda x: x["occupancy_rate"], reverse=True),
-                "hourly_occupancy": hourly_occupancy,
-                "weekday_occupancy": list(weekday_stats.values())
+                "cinema_occupancy": cinema_occupancy_formatted,
+                "hourly_occupancy": hourly_occupancy_formatted,
+                "weekday_occupancy": weekday_occupancy_formatted
             }
         except Exception as e:
             logger.error(f"Error generating occupancy report: {e}")
@@ -251,93 +294,90 @@ class AnalyticsService:
         date_to: str = None,
         limit: int = 10
     ) -> Dict[str, Any]:
-        """Get top performing movies analysis"""
+        """Get top performing movies analysis using SQL aggregations and rankings"""
         try:
-            query = self.db.query(Schedule).join(Movie).join(Cinema)
-
-            # Apply date filters
+            # Parse date filters
             if date_from:
                 date_from_parsed = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
-                query = query.filter(Schedule.time_slot >= date_from_parsed)
             else:
                 date_from_parsed = datetime.now() - timedelta(days=30)
-                query = query.filter(Schedule.time_slot >= date_from_parsed)
 
             if date_to:
                 date_to_parsed = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
-                query = query.filter(Schedule.time_slot <= date_to_parsed)
+            else:
+                date_to_parsed = datetime.now()
 
-            schedules = query.all()
+            # Base filter conditions
+            filter_conditions = [
+                Schedule.time_slot >= date_from_parsed,
+                Schedule.time_slot <= date_to_parsed
+            ]
 
-            # Aggregate movie performance
-            movie_performance = {}
-            for schedule in schedules:
-                movie_id = str(schedule.movie_id)
-                if movie_id not in movie_performance:
-                    movie_performance[movie_id] = {
-                        "movie_id": movie_id,
-                        "title": schedule.movie.title,
-                        "genre": schedule.movie.genre,
-                        "rating": schedule.movie.rating,
-                        "duration": schedule.movie.duration,
-                        "total_revenue": 0,
-                        "total_tickets_sold": 0,
-                        "total_capacity": 0,
-                        "showings": 0,
-                        "average_price": 0,
-                        "occupancy_rate": 0
-                    }
+            # Movie performance aggregation with SQL GROUP BY
+            movie_performance_query = self.db.query(
+                Movie.id.label('movie_id'),
+                Movie.title.label('title'),
+                Movie.genre.label('genre'),
+                Movie.rating.label('rating'),
+                Movie.duration.label('duration'),
+                func.sum((Schedule.unit_price + Schedule.service_fee) * Schedule.current_sales).label('total_revenue'),
+                func.sum(Schedule.current_sales).label('total_tickets_sold'),
+                func.sum(Schedule.max_sales).label('total_capacity'),
+                func.count(Schedule.id).label('showings')
+            ).join(Schedule).filter(and_(*filter_conditions)).group_by(
+                Movie.id, Movie.title, Movie.genre, Movie.rating, Movie.duration
+            )
 
-                revenue = (schedule.unit_price + schedule.service_fee) * schedule.current_sales
-                movie_performance[movie_id]["total_revenue"] += revenue
-                movie_performance[movie_id]["total_tickets_sold"] += schedule.current_sales
-                movie_performance[movie_id]["total_capacity"] += schedule.max_sales
-                movie_performance[movie_id]["showings"] += 1
+            # Get all movie performance data
+            movie_performance_data = movie_performance_query.all()
 
-            # Calculate derived metrics
-            for movie in movie_performance.values():
-                movie["occupancy_rate"] = round(
-                    (movie["total_tickets_sold"] / movie["total_capacity"]) * 100, 2
-                ) if movie["total_capacity"] > 0 else 0
-                movie["average_price"] = round(
-                    movie["total_revenue"] / movie["total_tickets_sold"], 2
-                ) if movie["total_tickets_sold"] > 0 else 0
+            # Format with calculated metrics
+            all_movies = []
+            for row in movie_performance_data:
+                total_revenue = float(row.total_revenue or 0)
+                total_tickets = int(row.total_tickets_sold or 0)
+                total_capacity = int(row.total_capacity or 0)
+                showings = int(row.showings or 0)
 
-            # Sort by different metrics
-            top_by_revenue = sorted(
-                movie_performance.values(),
-                key=lambda x: x["total_revenue"],
-                reverse=True
-            )[:limit]
+                occupancy_rate = round((total_tickets / total_capacity) * 100, 2) if total_capacity > 0 else 0
+                average_price = round(total_revenue / total_tickets, 2) if total_tickets > 0 else 0
 
-            top_by_tickets = sorted(
-                movie_performance.values(),
-                key=lambda x: x["total_tickets_sold"],
-                reverse=True
-            )[:limit]
+                movie_data = {
+                    "movie_id": str(row.movie_id),
+                    "title": row.title,
+                    "genre": row.genre,
+                    "rating": row.rating,
+                    "duration": row.duration,
+                    "total_revenue": round(total_revenue, 2),
+                    "total_tickets_sold": total_tickets,
+                    "total_capacity": total_capacity,
+                    "showings": showings,
+                    "average_price": average_price,
+                    "occupancy_rate": occupancy_rate
+                }
+                all_movies.append(movie_data)
 
-            top_by_occupancy = sorted(
-                movie_performance.values(),
-                key=lambda x: x["occupancy_rate"],
-                reverse=True
-            )[:limit]
+            # Create rankings using SQL-style sorting
+            top_by_revenue = sorted(all_movies, key=lambda x: x["total_revenue"], reverse=True)[:limit]
+            top_by_tickets = sorted(all_movies, key=lambda x: x["total_tickets_sold"], reverse=True)[:limit]
+            top_by_occupancy = sorted(all_movies, key=lambda x: x["occupancy_rate"], reverse=True)[:limit]
 
             return {
                 "period": {
-                    "from": date_from if date_from else date_from_parsed.isoformat(),
-                    "to": date_to if date_to else datetime.now().isoformat()
+                    "from": date_from_parsed.isoformat(),
+                    "to": date_to_parsed.isoformat()
                 },
                 "top_by_revenue": top_by_revenue,
                 "top_by_tickets_sold": top_by_tickets,
                 "top_by_occupancy_rate": top_by_occupancy,
-                "total_movies_analyzed": len(movie_performance)
+                "total_movies_analyzed": len(all_movies)
             }
         except Exception as e:
             logger.error(f"Error generating movie performance report: {e}")
             raise
 
     async def get_daily_summary(self, date: str = None) -> Dict[str, Any]:
-        """Get summary for a specific day"""
+        """Get summary for a specific day using SQL aggregations"""
         try:
             if date:
                 target_date = datetime.fromisoformat(date.replace('Z', '+00:00')).date()
@@ -347,42 +387,171 @@ class AnalyticsService:
             start_of_day = datetime.combine(target_date, datetime.min.time())
             end_of_day = datetime.combine(target_date, datetime.max.time())
 
-            schedules = self.db.query(Schedule).join(Movie).join(Cinema).filter(
+            # Summary statistics with SQL aggregations
+            summary_stats = self.db.query(
+                func.sum((Schedule.unit_price + Schedule.service_fee) * Schedule.current_sales).label('total_revenue'),
+                func.sum(Schedule.current_sales).label('total_tickets'),
+                func.sum(Schedule.max_sales).label('total_capacity'),
+                func.count(Schedule.id).label('total_showings')
+            ).filter(
                 and_(
                     Schedule.time_slot >= start_of_day,
                     Schedule.time_slot <= end_of_day
                 )
-            ).all()
+            ).first()
 
-            total_revenue = sum(
-                (schedule.unit_price + schedule.service_fee) * schedule.current_sales
-                for schedule in schedules
-            )
-            total_tickets = sum(schedule.current_sales for schedule in schedules)
-            total_capacity = sum(schedule.max_sales for schedule in schedules)
+            total_revenue = float(summary_stats.total_revenue or 0)
+            total_tickets = int(summary_stats.total_tickets or 0)
+            total_capacity = int(summary_stats.total_capacity or 0)
+            total_showings = int(summary_stats.total_showings or 0)
+
+            # Schedule details with optimized query (only when needed)
+            schedule_details_query = self.db.query(
+                Schedule.time_slot,
+                Movie.title.label('movie_title'),
+                Cinema.number.label('cinema_number'),
+                Schedule.current_sales,
+                Schedule.max_sales,
+                ((Schedule.unit_price + Schedule.service_fee) * Schedule.current_sales).label('revenue')
+            ).join(Movie).join(Cinema).filter(
+                and_(
+                    Schedule.time_slot >= start_of_day,
+                    Schedule.time_slot <= end_of_day
+                )
+            ).order_by(Schedule.time_slot).all()
+
+            # Format schedule details
+            schedule_details = [
+                {
+                    "time": row.time_slot.strftime("%H:%M"),
+                    "movie": row.movie_title,
+                    "cinema": f"Cinema {row.cinema_number}",
+                    "sold": row.current_sales,
+                    "capacity": row.max_sales,
+                    "revenue": round(float(row.revenue or 0), 2)
+                }
+                for row in schedule_details_query
+            ]
 
             return {
                 "date": target_date.isoformat(),
-                "total_showings": len(schedules),
+                "total_showings": total_showings,
                 "total_revenue": round(total_revenue, 2),
                 "total_tickets_sold": total_tickets,
                 "total_capacity": total_capacity,
                 "occupancy_rate": round((total_tickets / total_capacity) * 100, 2) if total_capacity > 0 else 0,
                 "average_ticket_price": round(total_revenue / total_tickets, 2) if total_tickets > 0 else 0,
-                "schedule_details": [
-                    {
-                        "time": schedule.time_slot.strftime("%H:%M"),
-                        "movie": schedule.movie.title,
-                        "cinema": f"Cinema {schedule.cinema.number}",
-                        "sold": schedule.current_sales,
-                        "capacity": schedule.max_sales,
-                        "revenue": round((schedule.unit_price + schedule.service_fee) * schedule.current_sales, 2)
-                    }
-                    for schedule in sorted(schedules, key=lambda x: x.time_slot)
-                ]
+                "schedule_details": schedule_details
             }
         except Exception as e:
             logger.error(f"Error generating daily summary: {e}")
+            raise
+
+    def _build_date_filters(self, date_from: str = None, date_to: str = None, default_days: int = 30):
+        """Helper method to build standardized date filters"""
+        if date_from:
+            date_from_parsed = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+        else:
+            date_from_parsed = datetime.now() - timedelta(days=default_days)
+
+        if date_to:
+            date_to_parsed = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+        else:
+            date_to_parsed = datetime.now()
+
+        return date_from_parsed, date_to_parsed
+
+    async def get_performance_metrics(self, date_from: str = None, date_to: str = None) -> Dict[str, Any]:
+        """Get comprehensive performance metrics using optimized SQL queries"""
+        try:
+            date_from_parsed, date_to_parsed = self._build_date_filters(date_from, date_to)
+
+            filter_conditions = [
+                Schedule.time_slot >= date_from_parsed,
+                Schedule.time_slot <= date_to_parsed
+            ]
+
+            # High-level metrics in a single query
+            metrics = self.db.query(
+                func.sum((Schedule.unit_price + Schedule.service_fee) * Schedule.current_sales).label('total_revenue'),
+                func.sum(Schedule.current_sales).label('total_tickets'),
+                func.sum(Schedule.max_sales).label('total_capacity'),
+                func.count(Schedule.id).label('total_showings'),
+                func.count(func.distinct(Schedule.movie_id)).label('unique_movies'),
+                func.count(func.distinct(Schedule.cinema_id)).label('unique_cinemas'),
+                func.avg(Schedule.unit_price + Schedule.service_fee).label('avg_ticket_price')
+            ).filter(and_(*filter_conditions)).first()
+
+            total_revenue = float(metrics.total_revenue or 0)
+            total_tickets = int(metrics.total_tickets or 0)
+            total_capacity = int(metrics.total_capacity or 0)
+
+            return {
+                "period": {
+                    "from": date_from_parsed.isoformat(),
+                    "to": date_to_parsed.isoformat()
+                },
+                "metrics": {
+                    "total_revenue": round(total_revenue, 2),
+                    "total_tickets_sold": total_tickets,
+                    "total_capacity": total_capacity,
+                    "total_showings": int(metrics.total_showings or 0),
+                    "unique_movies": int(metrics.unique_movies or 0),
+                    "unique_cinemas": int(metrics.unique_cinemas or 0),
+                    "overall_occupancy_rate": round((total_tickets / total_capacity) * 100, 2) if total_capacity > 0 else 0,
+                    "average_ticket_price": round(float(metrics.avg_ticket_price or 0), 2),
+                    "revenue_per_showing": round(total_revenue / int(metrics.total_showings or 1), 2)
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error generating performance metrics: {e}")
+            raise
+
+    async def get_quick_stats(self) -> Dict[str, Any]:
+        """Get quick dashboard statistics using optimized queries"""
+        try:
+            today = datetime.now().date()
+            today_start = datetime.combine(today, datetime.min.time())
+            today_end = datetime.combine(today, datetime.max.time())
+
+            # Today's stats
+            today_stats = self.db.query(
+                func.sum((Schedule.unit_price + Schedule.service_fee) * Schedule.current_sales).label('revenue'),
+                func.sum(Schedule.current_sales).label('tickets'),
+                func.count(Schedule.id).label('showings')
+            ).filter(
+                and_(
+                    Schedule.time_slot >= today_start,
+                    Schedule.time_slot <= today_end
+                )
+            ).first()
+
+            # This month's stats
+            month_start = today.replace(day=1)
+            month_start_dt = datetime.combine(month_start, datetime.min.time())
+
+            month_stats = self.db.query(
+                func.sum((Schedule.unit_price + Schedule.service_fee) * Schedule.current_sales).label('revenue'),
+                func.sum(Schedule.current_sales).label('tickets'),
+                func.count(Schedule.id).label('showings')
+            ).filter(
+                Schedule.time_slot >= month_start_dt
+            ).first()
+
+            return {
+                "today": {
+                    "revenue": round(float(today_stats.revenue or 0), 2),
+                    "tickets_sold": int(today_stats.tickets or 0),
+                    "showings": int(today_stats.showings or 0)
+                },
+                "this_month": {
+                    "revenue": round(float(month_stats.revenue or 0), 2),
+                    "tickets_sold": int(month_stats.tickets or 0),
+                    "showings": int(month_stats.showings or 0)
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error generating quick stats: {e}")
             raise
 
 # Global analytics service instance

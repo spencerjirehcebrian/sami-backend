@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import and_, or_, func
 from app.database import get_db
 from app.models.schedule import Schedule
@@ -8,6 +8,7 @@ from app.models.cinema import Cinema, CinemaType
 from app.notifications.broadcaster import broadcaster
 from datetime import datetime, timedelta
 import logging
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,12 @@ class ScheduleService:
 
     def __init__(self, db: Session = None):
         self.db = db or next(get_db())
+        # Request-scoped cache for frequently accessed entities
+        self._cache = {
+            'movies': {},
+            'cinemas': {},
+            'cinema_types': {}
+        }
 
     async def get_all_schedules(
         self,
@@ -61,8 +68,11 @@ class ScheduleService:
             if offset < 0:
                 raise ValueError("Offset must be non-negative")
 
-            # Build query with filters
-            query = self.db.query(Schedule).join(Movie).join(Cinema).join(CinemaType)
+            # Build optimized query with eager loading to avoid N+1 queries
+            query = self.db.query(Schedule).options(
+                joinedload(Schedule.movie),
+                joinedload(Schedule.cinema).joinedload(Cinema.cinema_type)
+            )
 
             # Apply date filters
             if date_from_parsed:
@@ -77,8 +87,18 @@ class ScheduleService:
             if movie_id:
                 query = query.filter(Schedule.movie_id == movie_id)
 
-            # Get total count before pagination
-            total_count = query.count()
+            # Get total count before pagination (without eager loading for count)
+            count_query = self.db.query(Schedule.id)
+            if date_from_parsed:
+                count_query = count_query.filter(Schedule.time_slot >= date_from_parsed)
+            if date_to_parsed:
+                count_query = count_query.filter(Schedule.time_slot <= date_to_parsed)
+            if cinema_id:
+                count_query = count_query.filter(Schedule.cinema_id == cinema_id)
+            if movie_id:
+                count_query = count_query.filter(Schedule.movie_id == movie_id)
+
+            total_count = count_query.count()
 
             # Apply pagination
             schedules = query.offset(offset).limit(limit).all()
@@ -134,9 +154,12 @@ class ScheduleService:
             raise
 
     async def get_schedule_by_id(self, schedule_id: str) -> Optional[Dict[str, Any]]:
-        """Get a specific schedule by ID"""
+        """Get a specific schedule by ID with optimized relationship loading"""
         try:
-            schedule = self.db.query(Schedule).join(Movie).join(Cinema).join(CinemaType).filter(
+            schedule = self.db.query(Schedule).options(
+                joinedload(Schedule.movie),
+                joinedload(Schedule.cinema).joinedload(Cinema.cinema_type)
+            ).filter(
                 Schedule.id == schedule_id
             ).first()
 
@@ -168,6 +191,256 @@ class ScheduleService:
             }
         except Exception as e:
             logger.error(f"Error getting schedule by ID {schedule_id}: {e}")
+            raise
+
+    async def get_schedules_summary(
+        self,
+        date_from: str = None,
+        date_to: str = None,
+        cinema_id: str = None,
+        movie_id: str = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """
+        Get schedule summaries with minimal data - optimized for list views.
+        Only loads essential columns to reduce memory usage and transfer time.
+        """
+        try:
+            # Parse date filters
+            date_from_parsed = None
+            date_to_parsed = None
+
+            if date_from:
+                date_from_parsed = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+            if date_to:
+                date_to_parsed = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+
+            # Column-only query for better performance
+            query = self.db.query(
+                Schedule.id,
+                Schedule.time_slot,
+                Schedule.unit_price,
+                Schedule.service_fee,
+                Schedule.current_sales,
+                Schedule.max_sales,
+                Schedule.status,
+                Movie.title.label('movie_title'),
+                Movie.duration.label('movie_duration'),
+                Cinema.number.label('cinema_number'),
+                CinemaType.name.label('cinema_type')
+            ).join(Movie).join(Cinema).join(CinemaType)
+
+            # Apply filters
+            if date_from_parsed:
+                query = query.filter(Schedule.time_slot >= date_from_parsed)
+            if date_to_parsed:
+                query = query.filter(Schedule.time_slot <= date_to_parsed)
+            if cinema_id:
+                query = query.filter(Schedule.cinema_id == cinema_id)
+            if movie_id:
+                query = query.filter(Schedule.movie_id == movie_id)
+
+            # Apply pagination and execute
+            schedules = query.offset(offset).limit(limit).all()
+
+            # Format minimal response
+            return [
+                {
+                    "id": str(schedule.id),
+                    "time_slot": schedule.time_slot.isoformat(),
+                    "movie_title": schedule.movie_title,
+                    "movie_duration": schedule.movie_duration,
+                    "cinema_number": schedule.cinema_number,
+                    "cinema_type": schedule.cinema_type,
+                    "unit_price": schedule.unit_price,
+                    "service_fee": schedule.service_fee,
+                    "current_sales": schedule.current_sales,
+                    "max_sales": schedule.max_sales,
+                    "available_seats": schedule.max_sales - schedule.current_sales,
+                    "occupancy_rate": round((schedule.current_sales / schedule.max_sales) * 100, 2) if schedule.max_sales > 0 else 0,
+                    "status": schedule.status
+                }
+                for schedule in schedules
+            ]
+
+        except Exception as e:
+            logger.error(f"Error getting schedule summaries: {e}")
+            raise
+
+    async def get_schedules_for_export(
+        self,
+        date_from: str = None,
+        date_to: str = None,
+        cinema_id: str = None,
+        movie_id: str = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get schedules optimized for export operations.
+        Loads only essential columns needed for reports/exports.
+        """
+        try:
+            # Parse date filters
+            date_from_parsed = None
+            date_to_parsed = None
+
+            if date_from:
+                date_from_parsed = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+            if date_to:
+                date_to_parsed = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+
+            # Export-optimized query with specific columns
+            query = self.db.query(
+                Schedule.time_slot,
+                Movie.title.label('movie'),
+                Movie.genre.label('genre'),
+                Movie.rating.label('rating'),
+                Movie.duration.label('duration'),
+                Cinema.number.label('cinema'),
+                Cinema.location.label('location'),
+                CinemaType.name.label('type'),
+                Schedule.unit_price,
+                Schedule.service_fee,
+                Schedule.current_sales,
+                Schedule.max_sales,
+                Schedule.status,
+                ((Schedule.unit_price + Schedule.service_fee) * Schedule.current_sales).label('revenue')
+            ).join(Movie).join(Cinema).join(CinemaType)
+
+            # Apply filters
+            if date_from_parsed:
+                query = query.filter(Schedule.time_slot >= date_from_parsed)
+            if date_to_parsed:
+                query = query.filter(Schedule.time_slot <= date_to_parsed)
+            if cinema_id:
+                query = query.filter(Schedule.cinema_id == cinema_id)
+            if movie_id:
+                query = query.filter(Schedule.movie_id == movie_id)
+
+            schedules = query.all()
+
+            # Format for export
+            return [
+                {
+                    "date": schedule.time_slot.date().isoformat(),
+                    "time": schedule.time_slot.strftime("%H:%M"),
+                    "movie": schedule.movie,
+                    "genre": schedule.genre,
+                    "rating": schedule.rating,
+                    "duration": schedule.duration,
+                    "cinema": f"Cinema {schedule.cinema}",
+                    "location": schedule.location,
+                    "type": schedule.type,
+                    "ticket_price": schedule.unit_price + schedule.service_fee,
+                    "tickets_sold": schedule.current_sales,
+                    "capacity": schedule.max_sales,
+                    "occupancy_rate": round((schedule.current_sales / schedule.max_sales) * 100, 2) if schedule.max_sales > 0 else 0,
+                    "revenue": round(float(schedule.revenue or 0), 2),
+                    "status": schedule.status
+                }
+                for schedule in schedules
+            ]
+
+        except Exception as e:
+            logger.error(f"Error getting schedules for export: {e}")
+            raise
+
+    def schedule_exists(
+        self,
+        cinema_id: str,
+        time_slot: datetime,
+        exclude_schedule_id: str = None
+    ) -> bool:
+        """
+        Optimized existence check using EXISTS query instead of loading objects.
+        Much faster than loading full objects when only checking existence.
+        """
+        try:
+            # Build EXISTS query
+            exists_query = self.db.query(Schedule.id).filter(
+                Schedule.cinema_id == cinema_id,
+                Schedule.time_slot == time_slot
+            )
+
+            # Exclude specific schedule if provided
+            if exclude_schedule_id:
+                exists_query = exists_query.filter(Schedule.id != exclude_schedule_id)
+
+            # Use EXISTS for optimal performance
+            return self.db.query(exists_query.exists()).scalar()
+
+        except Exception as e:
+            logger.error(f"Error checking schedule existence: {e}")
+            raise
+
+    def schedule_exists_by_id(self, schedule_id: str) -> bool:
+        """Optimized schedule existence check by ID using EXISTS query."""
+        try:
+            return self.db.query(
+                self.db.query(Schedule.id).filter(Schedule.id == schedule_id).exists()
+            ).scalar()
+        except Exception as e:
+            logger.error(f"Error checking schedule existence by ID: {e}")
+            raise
+
+    def cinema_exists(self, cinema_id: str) -> bool:
+        """Optimized cinema existence check using EXISTS query."""
+        try:
+            return self.db.query(
+                self.db.query(Cinema.id).filter(Cinema.id == cinema_id).exists()
+            ).scalar()
+        except Exception as e:
+            logger.error(f"Error checking cinema existence: {e}")
+            raise
+
+    def movie_exists(self, movie_id: str) -> bool:
+        """Optimized movie existence check using EXISTS query."""
+        try:
+            return self.db.query(
+                self.db.query(Movie.id).filter(Movie.id == movie_id).exists()
+            ).scalar()
+        except Exception as e:
+            logger.error(f"Error checking movie existence: {e}")
+            raise
+
+    def get_schedules_count(
+        self,
+        date_from: str = None,
+        date_to: str = None,
+        cinema_id: str = None,
+        movie_id: str = None
+    ) -> int:
+        """
+        Optimized count query without loading objects.
+        Much faster than len(get_all_schedules()) for pagination.
+        """
+        try:
+            # Parse date filters
+            date_from_parsed = None
+            date_to_parsed = None
+
+            if date_from:
+                date_from_parsed = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+            if date_to:
+                date_to_parsed = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+
+            # Count-only query
+            query = self.db.query(Schedule.id)
+
+            # Apply filters
+            if date_from_parsed:
+                query = query.filter(Schedule.time_slot >= date_from_parsed)
+            if date_to_parsed:
+                query = query.filter(Schedule.time_slot <= date_to_parsed)
+            if cinema_id:
+                query = query.filter(Schedule.cinema_id == cinema_id)
+            if movie_id:
+                query = query.filter(Schedule.movie_id == movie_id)
+
+            return query.count()
+
+        except Exception as e:
+            logger.error(f"Error getting schedules count: {e}")
             raise
 
     async def check_schedule_conflicts(
@@ -691,6 +964,55 @@ class ScheduleService:
         except Exception as e:
             logger.error(f"Error getting optimized available slots: {e}")
             raise
+
+    def get_cached_movie(self, movie_id: str) -> Optional[Movie]:
+        """
+        Get movie from cache or database. Caches movies for the request lifetime
+        to avoid repeated queries for the same movie during schedule operations.
+        """
+        if movie_id in self._cache['movies']:
+            return self._cache['movies'][movie_id]
+
+        movie = self.db.query(Movie).filter(Movie.id == movie_id).first()
+        if movie:
+            self._cache['movies'][movie_id] = movie
+        return movie
+
+    def get_cached_cinema(self, cinema_id: str) -> Optional[Cinema]:
+        """
+        Get cinema from cache or database with eager loading of cinema_type.
+        Caches cinemas for the request lifetime to avoid repeated queries.
+        """
+        if cinema_id in self._cache['cinemas']:
+            return self._cache['cinemas'][cinema_id]
+
+        cinema = self.db.query(Cinema).options(
+            joinedload(Cinema.cinema_type)
+        ).filter(Cinema.id == cinema_id).first()
+        if cinema:
+            self._cache['cinemas'][cinema_id] = cinema
+        return cinema
+
+    def get_cached_cinema_type(self, cinema_type_id: str) -> Optional[CinemaType]:
+        """
+        Get cinema type from cache or database. Caches cinema types for the
+        request lifetime to avoid repeated queries.
+        """
+        if cinema_type_id in self._cache['cinema_types']:
+            return self._cache['cinema_types'][cinema_type_id]
+
+        cinema_type = self.db.query(CinemaType).filter(CinemaType.id == cinema_type_id).first()
+        if cinema_type:
+            self._cache['cinema_types'][cinema_type_id] = cinema_type
+        return cinema_type
+
+    def clear_cache(self):
+        """Clear the request-scoped cache. Should be called at the end of requests."""
+        self._cache = {
+            'movies': {},
+            'cinemas': {},
+            'cinema_types': {}
+        }
 
 # Global schedule service instance
 schedule_service = ScheduleService()

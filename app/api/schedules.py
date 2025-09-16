@@ -109,6 +109,66 @@ async def get_schedules(
         logger.error(f"Unexpected error getting schedules: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+@router.get("/summary", response_model=List[Dict[str, Any]])
+async def get_schedules_summary(
+    date_from: Optional[str] = Query(None, description="Filter from date (ISO format)"),
+    date_to: Optional[str] = Query(None, description="Filter to date (ISO format)"),
+    cinema_id: Optional[str] = Query(None, description="Filter by cinema ID"),
+    movie_id: Optional[str] = Query(None, description="Filter by movie ID"),
+    limit: int = Query(100, ge=1, le=1000, description="Number of records to return (1-1000)"),
+    offset: int = Query(0, ge=0, description="Number of records to skip"),
+    db: Session = Depends(get_db)
+):
+    """Get schedule summaries with minimal data - optimized for list views"""
+    try:
+        schedule_service = ScheduleService(db)
+
+        return schedule_service.get_schedules_summary(
+            date_from=date_from,
+            date_to=date_to,
+            cinema_id=cinema_id,
+            movie_id=movie_id,
+            limit=limit,
+            offset=offset
+        )
+    except ValidationError as e:
+        logger.warning(f"Validation error in get_schedules_summary: {e.message}")
+        raise HTTPException(status_code=400, detail=e.message)
+    except ValueError as e:
+        logger.warning(f"Validation error in get_schedules_summary: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error getting schedule summaries: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/export", response_model=List[Dict[str, Any]])
+async def get_schedules_for_export(
+    date_from: Optional[str] = Query(None, description="Filter from date (ISO format)"),
+    date_to: Optional[str] = Query(None, description="Filter to date (ISO format)"),
+    cinema_id: Optional[str] = Query(None, description="Filter by cinema ID"),
+    movie_id: Optional[str] = Query(None, description="Filter by movie ID"),
+    db: Session = Depends(get_db)
+):
+    """Get schedules formatted for export - includes all necessary fields"""
+    try:
+        schedule_service = ScheduleService(db)
+
+        return schedule_service.get_schedules_for_export(
+            date_from=date_from,
+            date_to=date_to,
+            cinema_id=cinema_id,
+            movie_id=movie_id
+        )
+    except ValidationError as e:
+        logger.warning(f"Validation error in get_schedules_for_export: {e.message}")
+        raise HTTPException(status_code=400, detail=e.message)
+    except ValueError as e:
+        logger.warning(f"Validation error in get_schedules_for_export: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error getting schedules for export: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 @router.get("/{schedule_id}", response_model=Dict[str, Any])
 async def get_schedule(schedule_id: str, db: Session = Depends(get_db)):
     """Get a specific schedule by ID"""
@@ -226,9 +286,8 @@ async def cancel_schedule(schedule_id: str, db: Session = Depends(get_db)):
     try:
         schedule_service = ScheduleService(db)
 
-        # Check if schedule exists
-        existing_schedule = await schedule_service.get_schedule_by_id(schedule_id)
-        if not existing_schedule:
+        # Check if schedule exists (optimized existence check)
+        if not schedule_service.schedule_exists_by_id(schedule_id):
             raise HTTPException(status_code=404, detail="Schedule not found")
 
         await schedule_service.cancel_schedule(schedule_id)
