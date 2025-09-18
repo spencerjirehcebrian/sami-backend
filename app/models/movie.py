@@ -14,6 +14,7 @@ class Movie(Base):
     genre = Column(String, nullable=False)
     rating = Column(String, nullable=False)
     description = Column(Text, nullable=False)
+    poster = Column(String, nullable=True)
     release_date = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

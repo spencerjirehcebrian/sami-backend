@@ -76,6 +76,7 @@ def seed_database():
                 genre="Action",
                 rating="PG-13",
                 description="Peter Quill, still reeling from the loss of Gamora, must rally his team around him to defend the universe along with protecting one of their own.",
+                poster="https://image.tmdb.org/t/p/w500/r2J02Z2OpNTctfOSN1Ydgii51I3.jpg",
                 release_date=datetime(2023, 5, 5),
             ),
             Movie(
@@ -84,6 +85,7 @@ def seed_database():
                 genre="Animation",
                 rating="PG",
                 description="Miles Morales catapults across the Multiverse, where he encounters a team of Spider-People charged with protecting its very existence.",
+                poster="https://image.tmdb.org/t/p/w500/8Vt6mWEReuy4Of61Lnj5Xj704m8.jpg",
                 release_date=datetime(2023, 6, 2),
             ),
             Movie(
@@ -92,6 +94,7 @@ def seed_database():
                 genre="Fantasy",
                 rating="PG",
                 description="A young mermaid makes a deal with a sea witch to trade her beautiful voice for human legs so she can discover the world above water.",
+                poster="https://image.tmdb.org/t/p/w500/ym1dxyOk4jFcSl4Q2zmRrA5BEEN.jpg",
                 release_date=datetime(2023, 5, 26),
             ),
             Movie(
@@ -100,6 +103,7 @@ def seed_database():
                 genre="Action",
                 rating="PG-13",
                 description="Dom Toretto and his family are targeted by the vengeful son of drug kingpin Hernan Reyes.",
+                poster="https://image.tmdb.org/t/p/w500/fiVW06jE7z9YnO4trhaMEdclSiC.jpg",
                 release_date=datetime(2023, 5, 19),
             ),
             Movie(
@@ -108,6 +112,7 @@ def seed_database():
                 genre="Adventure",
                 rating="PG-13",
                 description="Archaeologist Indiana Jones races against time to retrieve a legendary artifact that can change the course of history.",
+                poster="https://image.tmdb.org/t/p/w500/Af4bXE63pVsb2FtbW8uYIyPBadD.jpg",
                 release_date=datetime(2023, 6, 30),
             ),
             Movie(
@@ -116,6 +121,7 @@ def seed_database():
                 genre="Drama",
                 rating="R",
                 description="The story of American scientist J. Robert Oppenheimer and his role in the development of the atomic bomb.",
+                poster="https://image.tmdb.org/t/p/w500/8Gxv8gSFCU0XGDykEGv7zR1n2ua.jpg",
                 release_date=datetime(2023, 7, 21),
             ),
             Movie(
@@ -124,6 +130,7 @@ def seed_database():
                 genre="Comedy",
                 rating="PG-13",
                 description="Barbie and Ken are having the time of their lives in the colorful and seemingly perfect world of Barbie Land.",
+                poster="https://image.tmdb.org/t/p/w500/iuFNMS8U5cb6xfzi51Dbkovj7vM.jpg",
                 release_date=datetime(2023, 7, 21),
             ),
             Movie(
@@ -132,6 +139,7 @@ def seed_database():
                 genre="Action",
                 rating="PG-13",
                 description="Ethan Hunt and his IMF team embark on their most dangerous mission yet: to track down a terrifying new weapon.",
+                poster="https://image.tmdb.org/t/p/w500/NNxYkU70HPurnNCSiCjYAmacwm.jpg",
                 release_date=datetime(2023, 7, 12),
             ),
             Movie(
@@ -140,6 +148,7 @@ def seed_database():
                 genre="Drama",
                 rating="PG-13",
                 description="The story of Tim Ballard, a former US government agent, who quits his job in order to devote his life to rescuing children from global sex traffickers.",
+                poster="https://image.tmdb.org/t/p/w500/qA5kPYZA7FkVvqcEfJRoOy4kpHg.jpg",
                 release_date=datetime(2023, 7, 4),
             ),
             Movie(
@@ -148,6 +157,7 @@ def seed_database():
                 genre="Science Fiction",
                 rating="PG-13",
                 description="During the '90s, a new faction of Transformers - the Maximals - join the Autobots as allies in the battle for Earth.",
+                poster="https://image.tmdb.org/t/p/w500/gPbM0MK8CP8A174rmUwGsADNYKD.jpg",
                 release_date=datetime(2023, 6, 9),
             ),
             Movie(
@@ -156,6 +166,7 @@ def seed_database():
                 genre="Action",
                 rating="R",
                 description="John Wick uncovers a path to defeating The High Table. But before he can earn his freedom, he must face off against a new enemy.",
+                poster="https://image.tmdb.org/t/p/w500/vZloFAK7NmvMGKE7VkF5UHaz0I.jpg",
                 release_date=datetime(2023, 3, 24),
             ),
             Movie(
@@ -164,6 +175,7 @@ def seed_database():
                 genre="Science Fiction",
                 rating="PG-13",
                 description="Jake Sully lives with his newfound family formed on the extrasolar moon Pandora.",
+                poster="https://image.tmdb.org/t/p/w500/t6HIqrRAclMCA60NsSmeqe9RmNV.jpg",
                 release_date=datetime(2022, 12, 16),
             ),
             Movie(
@@ -172,6 +184,7 @@ def seed_database():
                 genre="Action",
                 rating="PG-13",
                 description="After thirty years, Maverick is still pushing the envelope as a top naval aviator.",
+                poster="https://image.tmdb.org/t/p/w500/62HCnUTziyWcpDaBO2i1DX17ljH.jpg",
                 release_date=datetime(2022, 5, 27),
             ),
             Movie(
@@ -180,6 +193,7 @@ def seed_database():
                 genre="Crime",
                 rating="PG-13",
                 description="When a sadistic serial killer begins murdering key political figures in Gotham, Batman is forced to investigate the city's hidden corruption.",
+                poster="https://image.tmdb.org/t/p/w500/74xTEgt7R36Fpooo50r9T25onhq.jpg",
                 release_date=datetime(2022, 3, 4),
             ),
             Movie(
@@ -188,6 +202,7 @@ def seed_database():
                 genre="Comedy",
                 rating="R",
                 description="A middle-aged Chinese immigrant is swept up into an insane adventure in which she alone can save existence.",
+                poster="https://image.tmdb.org/t/p/w500/u68AjlvlutfEIcpmbYpKcdi09ut.jpg",
                 release_date=datetime(2022, 3, 25),
             ),
             Movie(
@@ -196,6 +211,7 @@ def seed_database():
                 genre="Science Fiction",
                 rating="PG-13",
                 description="A noble family becomes embroiled in a war for control over the galaxy's most valuable asset.",
+                poster="https://image.tmdb.org/t/p/w500/d5NXSklXo0qyIYkgV94XAgMIckC.jpg",
                 release_date=datetime(2021, 10, 22),
             ),
             Movie(
@@ -204,6 +220,7 @@ def seed_database():
                 genre="Action",
                 rating="PG-13",
                 description="James Bond has left active service. His peace is short-lived when Felix Leiter, an old friend from the CIA, turns up asking for help.",
+                poster="https://image.tmdb.org/t/p/w500/iUgygt3fscRoKWCV1d0C7FbM9TP.jpg",
                 release_date=datetime(2021, 10, 8),
             ),
             Movie(
@@ -212,6 +229,7 @@ def seed_database():
                 genre="Comedy",
                 rating="R",
                 description="A love letter to journalists set in an outpost of an American newspaper in a fictional twentieth-century French city.",
+                poster="https://image.tmdb.org/t/p/w500/audiWhmdSV5q6C6256PJe9gBs6R.jpg",
                 release_date=datetime(2021, 10, 22),
             ),
             Movie(
@@ -220,6 +238,7 @@ def seed_database():
                 genre="Animation",
                 rating="PG",
                 description="A Colombian teenage girl has to face the frustration of being the only member of her family without magical powers.",
+                poster="https://image.tmdb.org/t/p/w500/4j0PNHkMr5ax3IA8tjtxcmPU3QT.jpg",
                 release_date=datetime(2021, 11, 24),
             ),
             Movie(
@@ -228,6 +247,7 @@ def seed_database():
                 genre="Drama",
                 rating="R",
                 description="A domineering rancher responds with mocking cruelty when his brother brings home a new wife and her son.",
+                poster="https://image.tmdb.org/t/p/w500/ltvP3B23X7tvYnJd3awhxSgkg4U.jpg",
                 release_date=datetime(2021, 12, 1),
             ),
             Movie(
@@ -236,6 +256,7 @@ def seed_database():
                 genre="Comedy",
                 rating="R",
                 description="Two low-level astronomers must go on a giant media tour to warn mankind of an approaching comet that will destroy planet Earth.",
+                poster="https://image.tmdb.org/t/p/w500/th4E1yqsE8DGpAseLiUrI60Hf8V.jpg",
                 release_date=datetime(2021, 12, 24),
             ),
             Movie(
@@ -244,6 +265,7 @@ def seed_database():
                 genre="Musical",
                 rating="PG-13",
                 description="An adaptation of the 1957 musical, West Side Story explores forbidden love and the rivalry between the Jets and the Sharks.",
+                poster="https://image.tmdb.org/t/p/w500/uDO8zWDhfWwoFdKS4fzkUJt0Rf0.jpg",
                 release_date=datetime(2021, 12, 10),
             ),
             Movie(
@@ -252,6 +274,7 @@ def seed_database():
                 genre="Science Fiction",
                 rating="R",
                 description="Return to a world of two realities: one, everyday life; the other, what lies behind it.",
+                poster="https://image.tmdb.org/t/p/w500/8c4a8kE7PizaGQQnditMmI1xbRp.jpg",
                 release_date=datetime(2021, 12, 22),
             ),
             Movie(
@@ -260,6 +283,7 @@ def seed_database():
                 genre="Action",
                 rating="PG-13",
                 description="Natasha Romanoff confronts the darker parts of her ledger when a dangerous conspiracy with ties to her past arises.",
+                poster="https://image.tmdb.org/t/p/w500/7JPpIjhD2V0sKyFvhB9khUMa30d.jpg",
                 release_date=datetime(2021, 7, 9),
             ),
             Movie(
@@ -268,6 +292,7 @@ def seed_database():
                 genre="Action",
                 rating="PG-13",
                 description="Shang-Chi must confront the past he thought he left behind when he is drawn into the web of the mysterious Ten Rings organization.",
+                poster="https://image.tmdb.org/t/p/w500/d08HqqeBQSwN8i8MEvpsZ8Cb438.jpg",
                 release_date=datetime(2021, 9, 3),
             ),
             Movie(
@@ -276,6 +301,7 @@ def seed_database():
                 genre="Horror",
                 rating="PG-13",
                 description="Following the events at home, the Abbott family now face the terrors of the outside world.",
+                poster="https://image.tmdb.org/t/p/w500/bShgiEQoPnWdw4LBrYT5u18JF34.jpg",
                 release_date=datetime(2021, 5, 28),
             ),
             Movie(
@@ -284,6 +310,7 @@ def seed_database():
                 genre="Horror",
                 rating="R",
                 description="The Warrens investigate a murder that may be linked to a demonic possession.",
+                poster="https://image.tmdb.org/t/p/w500/4q2hz2m8hubgvijz8Ez0T2Os2Yv.jpg",
                 release_date=datetime(2021, 6, 4),
             ),
             Movie(
@@ -292,6 +319,7 @@ def seed_database():
                 genre="Horror",
                 rating="R",
                 description="Twenty-five years after a streak of brutal murders shocked the quiet town of Woodsboro, a new killer has donned the Ghostface mask.",
+                poster="https://image.tmdb.org/t/p/w500/xEt2GSz9z5rSVpIHMiGdtf0czyf.jpg",
                 release_date=datetime(2022, 1, 14),
             ),
             Movie(
@@ -300,6 +328,7 @@ def seed_database():
                 genre="Animation",
                 rating="PG",
                 description="A thirteen-year-old girl named Mei Lee is torn between staying her mother's dutiful daughter and the changes of adolescence.",
+                poster="https://image.tmdb.org/t/p/w500/qsdjk9oAKSQMWs0Vt5Pyfh6O4GZ.jpg",
                 release_date=datetime(2022, 3, 11),
             ),
             Movie(
@@ -308,6 +337,7 @@ def seed_database():
                 genre="Animation",
                 rating="PG",
                 description="On the Italian Riviera, an unlikely but strong friendship grows between a human being and a sea monster disguised as a human.",
+                poster="https://image.tmdb.org/t/p/w500/pEz5aROvfy5FBW1OTlrDO3VryWO.jpg",
                 release_date=datetime(2021, 6, 18),
             ),
         ]
