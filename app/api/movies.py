@@ -16,6 +16,7 @@ class MovieCreate(BaseModel):
     genre: str
     rating: str
     description: Optional[str] = None
+    poster: Optional[str] = None
     release_date: Optional[str] = None
 
 class MovieUpdate(BaseModel):
@@ -24,6 +25,7 @@ class MovieUpdate(BaseModel):
     genre: Optional[str] = None
     rating: Optional[str] = None
     description: Optional[str] = None
+    poster: Optional[str] = None
     release_date: Optional[str] = None
 
 @router.get("", response_model=List[Dict[str, Any]])

@@ -27,6 +27,7 @@ class MovieService:
                     "genre": movie.genre,
                     "rating": movie.rating,
                     "description": movie.description,
+                    "poster": movie.poster,
                     "release_date": movie.release_date.isoformat() if movie.release_date else None,
                     "created_at": movie.created_at.isoformat(),
                     "updated_at": movie.updated_at.isoformat()
@@ -51,6 +52,7 @@ class MovieService:
                 "genre": movie.genre,
                 "rating": movie.rating,
                 "description": movie.description,
+                "poster": movie.poster,
                 "release_date": movie.release_date.isoformat() if movie.release_date else None,
                 "created_at": movie.created_at.isoformat(),
                 "updated_at": movie.updated_at.isoformat()
@@ -89,6 +91,7 @@ class MovieService:
                     "genre": movie.genre,
                     "rating": movie.rating,
                     "description": movie.description,
+                    "poster": movie.poster,
                     "release_date": movie.release_date.isoformat() if movie.release_date else None,
                     "created_at": movie.created_at.isoformat(),
                     "updated_at": movie.updated_at.isoformat()
@@ -106,6 +109,7 @@ class MovieService:
         genre: str,
         rating: str,
         description: str,
+        poster: str = None,
         release_date: str = None
     ) -> Dict[str, Any]:
         """Create a new movie"""
@@ -133,6 +137,7 @@ class MovieService:
                 genre=genre,
                 rating=rating,
                 description=description,
+                poster=poster,
                 release_date=parsed_release_date
             )
 
@@ -159,6 +164,7 @@ class MovieService:
                 "genre": movie.genre,
                 "rating": movie.rating,
                 "description": movie.description,
+                "poster": movie.poster,
                 "release_date": movie.release_date.isoformat() if movie.release_date else None,
                 "created_at": movie.created_at.isoformat(),
                 "updated_at": movie.updated_at.isoformat(),
@@ -177,6 +183,7 @@ class MovieService:
         genre: str = None,
         rating: str = None,
         description: str = None,
+        poster: str = None,
         release_date: str = None
     ) -> Dict[str, Any]:
         """Update an existing movie"""
@@ -202,6 +209,8 @@ class MovieService:
                 movie.rating = rating
             if description is not None:
                 movie.description = description
+            if poster is not None:
+                movie.poster = poster
 
             if release_date is not None:
                 try:
@@ -235,6 +244,7 @@ class MovieService:
                 "genre": movie.genre,
                 "rating": movie.rating,
                 "description": movie.description,
+                "poster": movie.poster,
                 "release_date": movie.release_date.isoformat() if movie.release_date else None,
                 "updated_at": movie.updated_at.isoformat(),
                 "message": f"Movie '{movie.title}' updated successfully"
@@ -291,6 +301,7 @@ class MovieService:
                     "genre": movie.genre,
                     "rating": movie.rating,
                     "description": movie.description,
+                    "poster": movie.poster,
                     "release_date": movie.release_date.isoformat() if movie.release_date else None
                 }
                 for movie in movies
