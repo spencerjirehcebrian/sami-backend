@@ -1,5 +1,7 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from typing import Dict, List
+from app.database import get_db
+from app.services.chat_persistence_service import ChatPersistenceService
 import json
 import uuid
 import logging
@@ -18,7 +20,19 @@ class ConnectionManager:
         """Accept a new WebSocket connection and store it"""
         await websocket.accept()
         self.active_connections[session_id] = websocket
-        logger.info(f"WebSocket connection established for session: {session_id}")
+
+        # Ensure chat session exists in database
+        try:
+            db = next(get_db())
+            chat_persistence = ChatPersistenceService(db)
+            await chat_persistence.ensure_chat_session(session_id)
+            logger.info(f"WebSocket connection established for session: {session_id}")
+        except Exception as e:
+            logger.error(f"Error ensuring chat session {session_id}: {e}")
+        finally:
+            if 'db' in locals():
+                db.close()
+
         logger.info(f"Total active connections: {len(self.active_connections)}")
 
     def disconnect(self, session_id: str):
@@ -60,6 +74,7 @@ class ConnectionManager:
         Process a user message and return a response.
         Uses the message handlers for validation and processing.
         """
+        db = None
         try:
             # Import here to avoid circular imports
             from app.websocket.handlers import MessageHandler, message_processor
@@ -75,8 +90,36 @@ class ConnectionManager:
 
             logger.info(f"Processing {validated_message['type']} message from session {session_id}: {validated_message['content'][:100]}...")
 
+            # Save user message to database
+            db = next(get_db())
+            chat_persistence = ChatPersistenceService(db)
+
+            await chat_persistence.save_user_message(
+                session_id=session_id,
+                content=validated_message['content'],
+                message_type=validated_message['type'],
+                metadata=validated_message.get('metadata')
+            )
+
             # Process the validated message
             response = await message_processor.process_message(validated_message, session_id)
+
+            # Parse response to extract content and metadata for saving
+            try:
+                response_data = json.loads(response)
+                await chat_persistence.save_ai_message(
+                    session_id=session_id,
+                    content=response_data.get('content', ''),
+                    message_type=response_data.get('type', 'response'),
+                    metadata=response_data.get('metadata')
+                )
+            except json.JSONDecodeError:
+                # Fallback if response is not valid JSON
+                await chat_persistence.save_ai_message(
+                    session_id=session_id,
+                    content=response,
+                    message_type='response'
+                )
 
             return response
 
@@ -89,6 +132,9 @@ class ConnectionManager:
                 session_id=session_id,
                 error_code="PROCESSING_ERROR"
             )
+        finally:
+            if db:
+                db.close()
 
     def get_connection_count(self) -> int:
         """Get the number of active connections"""
