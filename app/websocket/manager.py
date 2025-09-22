@@ -165,8 +165,15 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     await manager.connect(websocket, session_id)
 
     try:
-        # Send welcome message
-        welcome_content = f"""Welcome to SAMi Backend AI Assistant!\n\n
+        # Check if welcome message was already sent for this session
+        db = next(get_db())
+        chat_persistence = ChatPersistenceService(db)
+        session = await chat_persistence.ensure_chat_session(session_id)
+
+        # Only send welcome message if not already sent
+        if not session.context or not session.context.get("welcome_sent"):
+            # Send welcome message
+            welcome_content = f"""Welcome to SAMi Backend AI Assistant!\n\n
 
 I'm here to help you with:
 * Movie scheduling and management
@@ -176,14 +183,27 @@ I'm here to help you with:
 \n\n
 Type 'help' for available commands or just chat naturally!"""
 
-        welcome_message = {
-            "type": "system",
-            "content": welcome_content,
-            "session_id": session_id,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-            "metadata": {"system_type": "welcome", "session_established": True},
-        }
-        await manager.send_message(session_id, json.dumps(welcome_message))
+            welcome_message = {
+                "type": "system",
+                "content": welcome_content,
+                "session_id": session_id,
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "metadata": {"system_type": "welcome", "session_established": True},
+            }
+            await manager.send_message(session_id, json.dumps(welcome_message))
+
+            # Save welcome message to database as AI message
+            await chat_persistence.save_ai_message(
+                session_id=session_id,
+                content=welcome_content,
+                message_type="welcome",
+                metadata={"system_type": "welcome", "session_established": True}
+            )
+
+            # Mark welcome message as sent
+            await chat_persistence.ensure_chat_session(session_id, {"welcome_sent": True})
+
+        db.close()
 
         # Listen for messages
         while True:
