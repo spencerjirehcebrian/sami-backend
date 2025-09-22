@@ -94,33 +94,35 @@ class ConnectionManager:
                 f"Processing {validated_message['type']} message from session {session_id}: {validated_message['content'][:100]}..."
             )
 
-            # Save user message to database
+            # Save user message to database (skip ping messages)
             db = next(get_db())
             chat_persistence = ChatPersistenceService(db)
 
-            await chat_persistence.save_user_message(
-                session_id=session_id,
-                content=validated_message["content"],
-                message_type=validated_message["type"],
-                metadata=validated_message.get("metadata"),
-            )
+            if validated_message["type"] != "ping":
+                await chat_persistence.save_user_message(
+                    session_id=session_id,
+                    content=validated_message["content"],
+                    message_type=validated_message["type"],
+                    metadata=validated_message.get("metadata"),
+                )
 
             # Process the validated message
             response = await message_processor.process_message(
                 validated_message, session_id
             )
 
-            # Parse response to extract content and metadata for saving
+            # Parse response to extract content and metadata for saving (skip pong responses)
             try:
                 response_data = json.loads(response)
-                await chat_persistence.save_ai_message(
-                    session_id=session_id,
-                    content=response_data.get("content", ""),
-                    message_type=response_data.get("type", "response"),
-                    metadata=response_data.get("metadata"),
-                )
+                if response_data.get("type") != "pong":
+                    await chat_persistence.save_ai_message(
+                        session_id=session_id,
+                        content=response_data.get("content", ""),
+                        message_type=response_data.get("type", "response"),
+                        metadata=response_data.get("metadata"),
+                    )
             except json.JSONDecodeError:
-                # Fallback if response is not valid JSON
+                # Fallback if response is not valid JSON (and not a pong response)
                 await chat_persistence.save_ai_message(
                     session_id=session_id, content=response, message_type="response"
                 )
