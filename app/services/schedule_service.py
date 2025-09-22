@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Any
-from sqlalchemy.orm import Session, joinedload, selectinload
-from sqlalchemy import and_, or_, func
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import and_, func
 from app.database import get_db
 from app.models.schedule import Schedule
 from app.models.movie import Movie
@@ -8,7 +8,6 @@ from app.models.cinema import Cinema, CinemaType
 from app.notifications.broadcaster import broadcaster
 from datetime import datetime, timedelta
 import logging
-from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
@@ -195,157 +194,7 @@ class ScheduleService:
             logger.error(f"Error getting schedule by ID {schedule_id}: {e}")
             raise
 
-    def get_schedules_summary(
-        self,
-        date_from: str = None,
-        date_to: str = None,
-        cinema_id: str = None,
-        movie_id: str = None,
-        limit: int = 100,
-        offset: int = 0
-    ) -> List[Dict[str, Any]]:
-        """
-        Get schedule summaries with minimal data - optimized for list views.
-        Only loads essential columns to reduce memory usage and transfer time.
-        """
-        try:
-            # Parse date filters
-            date_from_parsed = None
-            date_to_parsed = None
 
-            if date_from:
-                date_from_parsed = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
-            if date_to:
-                date_to_parsed = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
-
-            # Column-only query for better performance
-            query = self.db.query(
-                Schedule.id,
-                Schedule.time_slot,
-                Schedule.unit_price,
-                Schedule.service_fee,
-                Schedule.current_sales,
-                Schedule.max_sales,
-                Schedule.status,
-                Movie.title.label('movie_title'),
-                Movie.duration.label('movie_duration'),
-                Cinema.number.label('cinema_number'),
-                CinemaType.name.label('cinema_type')
-            ).join(Movie).join(Cinema).join(CinemaType)
-
-            # Apply filters
-            if date_from_parsed:
-                query = query.filter(Schedule.time_slot >= date_from_parsed)
-            if date_to_parsed:
-                query = query.filter(Schedule.time_slot <= date_to_parsed)
-            if cinema_id:
-                query = query.filter(Schedule.cinema_id == cinema_id)
-            if movie_id:
-                query = query.filter(Schedule.movie_id == movie_id)
-
-            # Apply pagination and execute
-            schedules = query.offset(offset).limit(limit).all()
-
-            # Format minimal response
-            return [
-                {
-                    "id": str(schedule.id),
-                    "time_slot": schedule.time_slot.isoformat(),
-                    "movie_title": schedule.movie_title,
-                    "movie_duration": schedule.movie_duration,
-                    "cinema_number": schedule.cinema_number,
-                    "cinema_type": schedule.cinema_type,
-                    "unit_price": schedule.unit_price,
-                    "service_fee": schedule.service_fee,
-                    "current_sales": schedule.current_sales,
-                    "max_sales": schedule.max_sales,
-                    "available_seats": schedule.max_sales - schedule.current_sales,
-                    "occupancy_rate": round((schedule.current_sales / schedule.max_sales) * 100, 2) if schedule.max_sales > 0 else 0,
-                    "status": schedule.status
-                }
-                for schedule in schedules
-            ]
-
-        except Exception as e:
-            logger.error(f"Error getting schedule summaries: {e}")
-            raise
-
-    def get_schedules_for_export(
-        self,
-        date_from: str = None,
-        date_to: str = None,
-        cinema_id: str = None,
-        movie_id: str = None
-    ) -> List[Dict[str, Any]]:
-        """
-        Get schedules optimized for export operations.
-        Loads only essential columns needed for reports/exports.
-        """
-        try:
-            # Parse date filters
-            date_from_parsed = None
-            date_to_parsed = None
-
-            if date_from:
-                date_from_parsed = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
-            if date_to:
-                date_to_parsed = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
-
-            # Export-optimized query with specific columns
-            query = self.db.query(
-                Schedule.time_slot,
-                Movie.title.label('movie'),
-                Movie.genre.label('genre'),
-                Movie.rating.label('rating'),
-                Movie.duration.label('duration'),
-                Cinema.number.label('cinema'),
-                Cinema.location.label('location'),
-                CinemaType.name.label('type'),
-                Schedule.unit_price,
-                Schedule.service_fee,
-                Schedule.current_sales,
-                Schedule.max_sales,
-                Schedule.status,
-                ((Schedule.unit_price + Schedule.service_fee) * Schedule.current_sales).label('revenue')
-            ).join(Movie).join(Cinema).join(CinemaType)
-
-            # Apply filters
-            if date_from_parsed:
-                query = query.filter(Schedule.time_slot >= date_from_parsed)
-            if date_to_parsed:
-                query = query.filter(Schedule.time_slot <= date_to_parsed)
-            if cinema_id:
-                query = query.filter(Schedule.cinema_id == cinema_id)
-            if movie_id:
-                query = query.filter(Schedule.movie_id == movie_id)
-
-            schedules = query.all()
-
-            # Format for export
-            return [
-                {
-                    "date": schedule.time_slot.date().isoformat(),
-                    "time": schedule.time_slot.strftime("%H:%M"),
-                    "movie": schedule.movie,
-                    "genre": schedule.genre,
-                    "rating": schedule.rating,
-                    "duration": schedule.duration,
-                    "cinema": f"Cinema {schedule.cinema}",
-                    "location": schedule.location,
-                    "type": schedule.type,
-                    "ticket_price": schedule.unit_price + schedule.service_fee,
-                    "tickets_sold": schedule.current_sales,
-                    "capacity": schedule.max_sales,
-                    "occupancy_rate": round((schedule.current_sales / schedule.max_sales) * 100, 2) if schedule.max_sales > 0 else 0,
-                    "revenue": round(float(schedule.revenue or 0), 2),
-                    "status": schedule.status
-                }
-                for schedule in schedules
-            ]
-
-        except Exception as e:
-            logger.error(f"Error getting schedules for export: {e}")
-            raise
 
     def schedule_exists(
         self,
@@ -405,45 +254,6 @@ class ScheduleService:
             logger.error(f"Error checking movie existence: {e}")
             raise
 
-    def get_schedules_count(
-        self,
-        date_from: str = None,
-        date_to: str = None,
-        cinema_id: str = None,
-        movie_id: str = None
-    ) -> int:
-        """
-        Optimized count query without loading objects.
-        Much faster than len(get_all_schedules()) for pagination.
-        """
-        try:
-            # Parse date filters
-            date_from_parsed = None
-            date_to_parsed = None
-
-            if date_from:
-                date_from_parsed = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
-            if date_to:
-                date_to_parsed = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
-
-            # Count-only query
-            query = self.db.query(Schedule.id)
-
-            # Apply filters
-            if date_from_parsed:
-                query = query.filter(Schedule.time_slot >= date_from_parsed)
-            if date_to_parsed:
-                query = query.filter(Schedule.time_slot <= date_to_parsed)
-            if cinema_id:
-                query = query.filter(Schedule.cinema_id == cinema_id)
-            if movie_id:
-                query = query.filter(Schedule.movie_id == movie_id)
-
-            return query.count()
-
-        except Exception as e:
-            logger.error(f"Error getting schedules count: {e}")
-            raise
 
     async def check_schedule_conflicts(
         self,

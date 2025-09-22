@@ -1,6 +1,6 @@
 """
 Enhanced seed script for SAMi Backend Database
-Reduced schedule generation targeting ~200 schedules
+Reduced schedule generation targeting ~200 schedules with proper timezone handling
 """
 
 import sys
@@ -12,7 +12,8 @@ from app.database import SessionLocal
 from app.models.movie import Movie
 from app.models.cinema import Cinema, CinemaType
 from app.models.schedule import Schedule
-from datetime import datetime, timedelta
+from app.models.chat import ChatSession, ChatMessage
+from datetime import datetime, timedelta, timezone
 import uuid
 import random
 
@@ -24,12 +25,17 @@ def seed_database():
     try:
         print("Starting enhanced database seeding...")
 
+        # Define UTC+8 timezone
+        utc_plus_8 = timezone(timedelta(hours=8))
+
         # Clear existing data (optional - be careful in production!)
         print("Clearing existing data...")
         db.query(Schedule).delete()
         db.query(Cinema).delete()
         db.query(Movie).delete()
         db.query(CinemaType).delete()
+        db.query(ChatMessage).delete()  # Clear chat messages
+        db.query(ChatSession).delete()  # Clear chat sessions
         db.commit()
 
         # Seed cinema types
@@ -507,108 +513,167 @@ def seed_database():
         all_cinemas = db.query(Cinema).all()
         all_cinema_types = {ct.id: ct for ct in db.query(CinemaType).all()}
 
-        # REDUCED SCHEDULE SEEDING - Targeting ~200 schedules
-        print("Seeding reduced movie schedules (targeting ~200)...")
+        # FULL MONTH SCHEDULE SEEDING WITH RANDOMIZED TIMES
+        print("Seeding movie schedules for entire month with randomized times...")
         schedules = []
 
-        # OPTION 1: Reduce time slots to 4 per day (removes 2 least popular slots)
-        time_slots = [
-            (12, 30),  # 12:30 PM
-            (15, 0),  # 3:00 PM
-            (17, 30),  # 5:30 PM
-            (20, 0),  # 8:00 PM
-        ]
+        # Operating hours in local time (UTC+8): 9:00 AM to 9:00 PM
+        operating_start_hour = 9  # 9 AM
+        operating_end_hour = 21  # 9 PM
+        max_runtime_minutes = 210  # 3.5 hours max (including movie + cleanup)
+        cleanup_time = 30  # 30 minutes cleanup between shows
 
-        # OPTION 2: Reduce to 1 week (7 days) instead of 2 weeks
-        start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        schedule_days = 7  # Changed from 14 to 7
+        # Get current date in UTC+8 timezone
+        local_now = datetime.now(utc_plus_8)
+        start_date = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        # OPTION 3: Reduce scheduling probability
-        scheduling_probability = 0.6  # Changed from 0.7 to 0.6
+        schedule_days = 30  # Full month of schedules
+        shows_per_cinema_per_day = 4  # Average number of shows per cinema per day
+
+        # Calculate expected schedules
+        expected_schedules = schedule_days * len(all_cinemas) * shows_per_cinema_per_day
 
         print(
-            f"Configuration: {schedule_days} days, {len(time_slots)} time slots, {scheduling_probability*100}% scheduling probability"
+            f"Configuration: {schedule_days} days, ~{shows_per_cinema_per_day} shows per cinema per day"
         )
+        print(
+            f"Operating hours: {operating_start_hour}:00 AM to {operating_end_hour}:00 PM"
+        )
+        print(f"Max runtime per show: {max_runtime_minutes} minutes (3.5 hours)")
+        print(f"Expected schedules: ~{expected_schedules}")
+        print(f"Local timezone: UTC+8, Start date (local): {start_date}")
 
         for day_offset in range(schedule_days):
             current_date = start_date + timedelta(days=day_offset)
 
-            # Track which cinemas are occupied at which times for conflict prevention
+            # Track scheduled times for each cinema to detect soft conflicts
             cinema_schedule_tracker = {cinema.id: [] for cinema in all_cinemas}
 
-            # For each cinema, try to schedule movies throughout the day
+            # For each cinema, schedule random shows throughout the day
             for cinema in all_cinemas:
                 cinema_type = all_cinema_types[cinema.type]
 
-                # Shuffle time slots and movies for variety
-                available_slots = time_slots.copy()
-                random.shuffle(available_slots)
+                # Attempt to schedule multiple shows per day
+                for show_attempt in range(
+                    shows_per_cinema_per_day + 2
+                ):  # +2 for some extra attempts
 
-                for hour, minute in available_slots:
-                    # Reduced scheduling probability
-                    if random.random() < scheduling_probability:
+                    # Pick a random movie
+                    movie = random.choice(all_movies)
 
-                        # Pick a random movie
-                        movie = random.choice(all_movies)
+                    # Calculate actual runtime (movie + cleanup, but cap at max_runtime_minutes)
+                    actual_runtime = min(
+                        movie.duration + cleanup_time, max_runtime_minutes
+                    )
 
-                        # Calculate movie time slot
-                        time_slot = current_date.replace(hour=hour, minute=minute)
+                    # Calculate latest possible start time to fit within operating hours
+                    latest_start_hour = operating_end_hour - (actual_runtime / 60.0)
+                    if latest_start_hour < operating_start_hour:
+                        continue  # Movie too long for operating hours
 
-                        # Calculate end time (movie duration + 30 min cleanup)
-                        end_time = time_slot + timedelta(minutes=movie.duration + 30)
+                    # Generate random start time within valid range
+                    random_hour = random.uniform(
+                        operating_start_hour, latest_start_hour
+                    )
+                    start_hour = int(random_hour)
+                    start_minute = int((random_hour - start_hour) * 60)
 
-                        # Check for conflicts with existing schedules in this cinema
-                        conflict = False
-                        for existing_start, existing_end in cinema_schedule_tracker[
-                            cinema.id
-                        ]:
-                            if time_slot < existing_end and end_time > existing_start:
-                                conflict = True
-                                break
+                    # Create timezone-aware datetime in local timezone (UTC+8)
+                    local_time_slot = current_date.replace(
+                        hour=start_hour, minute=start_minute
+                    )
 
-                        if not conflict:
-                            # Calculate pricing
-                            base_price = 12.0  # Base ticket price
+                    # Convert to UTC for database storage
+                    utc_time_slot = local_time_slot.astimezone(timezone.utc)
+                    utc_end_time = utc_time_slot + timedelta(minutes=actual_runtime)
 
-                            # Time-based pricing
-                            if hour >= 18:  # Evening shows cost more
-                                base_price += 3.0
-                            elif hour >= 15:  # Afternoon shows
-                                base_price += 1.5
+                    # Soft conflict detection - calculate conflict probability
+                    conflict_penalty = 0.0
+                    for existing_start, existing_end in cinema_schedule_tracker[
+                        cinema.id
+                    ]:
+                        # Check for time overlap
+                        if (
+                            utc_time_slot < existing_end
+                            and utc_end_time > existing_start
+                        ):
+                            # Calculate overlap amount as a factor
+                            overlap_start = max(utc_time_slot, existing_start)
+                            overlap_end = min(utc_end_time, existing_end)
+                            overlap_minutes = (
+                                overlap_end - overlap_start
+                            ).total_seconds() / 60
+                            conflict_penalty += (
+                                overlap_minutes / actual_runtime
+                            )  # Penalty based on overlap ratio
 
-                            # Apply cinema type multiplier
-                            unit_price = base_price * cinema_type.price_multiplier
-                            service_fee = round(unit_price * 0.1, 2)  # 10% service fee
+                    # Reduce scheduling probability based on conflicts (but don't eliminate entirely)
+                    base_probability = 0.7  # Base chance of scheduling
+                    conflict_reduction = min(
+                        conflict_penalty * 0.5, 0.6
+                    )  # Max 60% reduction
+                    final_probability = max(
+                        base_probability - conflict_reduction, 0.1
+                    )  # Min 10% chance
 
-                            # Calculate realistic occupancy
-                            max_sales = cinema.total_seats
+                    # Decide whether to schedule this show
+                    if random.random() < final_probability:
+                        # Calculate pricing based on start time
+                        base_price = 12.0  # Base ticket price
 
-                            # More popular time slots have higher occupancy
-                            if hour in [20, 17]:  # Peak times
-                                occupancy_rate = random.uniform(0.6, 0.95)
-                            elif hour in [15]:  # Moderate times
-                                occupancy_rate = random.uniform(0.4, 0.8)
-                            else:  # Off-peak times (12:30)
-                                occupancy_rate = random.uniform(0.3, 0.7)
+                        # Time-based pricing (based on local hour)
+                        if start_hour >= 18:  # Evening shows cost more
+                            base_price += 3.0
+                        elif start_hour >= 15:  # Afternoon shows
+                            base_price += 1.5
 
-                            current_sales = int(max_sales * occupancy_rate)
+                        # Apply cinema type multiplier
+                        unit_price = base_price * cinema_type.price_multiplier
+                        service_fee = round(unit_price * 0.1, 2)  # 10% service fee
 
-                            # Create schedule
-                            schedule = Schedule(
-                                movie_id=movie.id,
-                                cinema_id=cinema.id,
-                                time_slot=time_slot,
-                                unit_price=round(unit_price, 2),
-                                service_fee=service_fee,
-                                max_sales=max_sales,
-                                current_sales=current_sales,
-                                status="active",
-                            )
+                        # Calculate realistic occupancy
+                        max_sales = cinema.total_seats
 
-                            schedules.append(schedule)
-                            cinema_schedule_tracker[cinema.id].append(
-                                (time_slot, end_time)
-                            )
+                        # Occupancy based on time and conflicts
+                        if start_hour >= 19 or start_hour <= 15:  # Peak times
+                            base_occupancy = random.uniform(0.6, 0.9)
+                        else:  # Off-peak times
+                            base_occupancy = random.uniform(0.3, 0.7)
+
+                        # Reduce occupancy slightly if there are conflicts (overlapping shows might split audience)
+                        occupancy_reduction = min(conflict_penalty * 0.1, 0.2)
+                        final_occupancy = max(base_occupancy - occupancy_reduction, 0.2)
+                        current_sales = int(max_sales * final_occupancy)
+
+                        # Create schedule with UTC time
+                        schedule = Schedule(
+                            movie_id=movie.id,
+                            cinema_id=cinema.id,
+                            time_slot=utc_time_slot,  # Store in UTC
+                            unit_price=round(unit_price, 2),
+                            service_fee=service_fee,
+                            max_sales=max_sales,
+                            current_sales=current_sales,
+                            status="active",
+                        )
+
+                        schedules.append(schedule)
+                        cinema_schedule_tracker[cinema.id].append(
+                            (utc_time_slot, utc_end_time)
+                        )
+
+                    # Stop if we have enough shows for this cinema today
+                    if (
+                        len(
+                            [
+                                s
+                                for s in cinema_schedule_tracker[cinema.id]
+                                if s[0].date() == utc_time_slot.date()
+                            ]
+                        )
+                        >= shows_per_cinema_per_day
+                    ):
+                        break
 
         # Add all schedules to database
         for schedule in schedules:
@@ -639,6 +704,15 @@ def seed_database():
         print(f"   - Total Revenue: ${total_revenue:,.2f}")
         print(f"   - Tickets Sold: {total_tickets_sold:,}")
         print(f"   - Overall Occupancy: {overall_occupancy:.1f}%")
+
+        # Show timezone conversion examples for verification
+        print(f"\nTimezone Conversion Examples:")
+        for i, schedule in enumerate(schedules[:3]):  # Show first 3 schedules
+            utc_time = schedule.time_slot
+            local_time = utc_time.astimezone(utc_plus_8)
+            print(
+                f"   Schedule {i+1}: UTC {utc_time.strftime('%Y-%m-%d %H:%M')} = Local {local_time.strftime('%Y-%m-%d %H:%M')} (UTC+8)"
+            )
 
     except Exception as e:
         print(f"Error during seeding: {e}")
