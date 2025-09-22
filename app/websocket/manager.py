@@ -166,14 +166,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
     try:
         # Send welcome message
-        welcome_content = f"""Welcome to SAMi Backend AI Assistant!
+        welcome_content = f"""Welcome to SAMi Backend AI Assistant!\n\n
 
 I'm here to help you with:
-• Movie scheduling and management
-• Cinema operations and reporting
-• Booking assistance and customer service
-• Real-time data queries and analytics
-
+* Movie scheduling and management
+* Cinema operations and reporting
+* Booking assistance and customer service
+* Real-time data queries and analytics
+\n\n
 Type 'help' for available commands or just chat naturally!"""
 
         welcome_message = {
