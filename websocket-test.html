@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAMi Backend WebSocket Tester</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .connection-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        select, input, button {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .disconnect {
+            background: #dc3545;
+        }
+        .disconnect:hover {
+            background: #c82333;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.connecting {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        .chat-container {
+            border: 1px solid #ddd;
+            height: 400px;
+            overflow-y: auto;
+            padding: 15px;
+            background: #fafafa;
+            margin-bottom: 15px;
+            border-radius: 4px;
+        }
+        .message {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 8px;
+            max-width: 80%;
+        }
+        .message.user {
+            background: #007bff;
+            color: white;
+            margin-left: auto;
+            text-align: right;
+        }
+        .message.ai {
+            background: #e9ecef;
+            color: #333;
+        }
+        .message.system {
+            background: #fff3cd;
+            color: #856404;
+            font-style: italic;
+            text-align: center;
+            max-width: 100%;
+        }
+        .message.error {
+            background: #f8d7da;
+            color: #721c24;
+            max-width: 100%;
+        }
+        .message-meta {
+            font-size: 11px;
+            opacity: 0.7;
+            margin-top: 5px;
+        }
+        .function-indicator {
+            display: inline-block;
+            background: #28a745;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            margin-left: 5px;
+        }
+        .input-container {
+            display: flex;
+            gap: 10px;
+        }
+        .input-container input {
+            flex: 1;
+        }
+        .session-info {
+            background: #e3f2fd;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        .quick-messages {
+            margin-bottom: 15px;
+        }
+        .quick-messages button {
+            background: #6c757d;
+            margin-right: 5px;
+            margin-bottom: 5px;
+            font-size: 12px;
+            padding: 5px 10px;
+        }
+        .quick-messages button:hover {
+            background: #545b62;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>SAMi Backend WebSocket Tester</h1>
+
+        <div class="connection-controls">
+            <label for="baseUrl">Base URL:</label>
+            <select id="baseUrl">
+                <option value="localhost:8000">localhost:8000</option>
+                <option value="sami-backend.spencerjireh.com">sami-backend.spencerjireh.com</option>
+            </select>
+
+            <label for="sessionId">Session ID:</label>
+            <input type="text" id="sessionId" placeholder="Auto-generated UUID" readonly>
+
+            <button id="generateSession">New Session</button>
+            <button id="connectBtn">Connect</button>
+            <button id="disconnectBtn" class="disconnect" disabled>Disconnect</button>
+        </div>
+
+        <div id="status" class="status disconnected">Disconnected</div>
+
+        <div class="session-info">
+            <strong>WebSocket URL:</strong> <span id="wsUrl">Not connected</span>
+        </div>
+
+        <div class="quick-messages">
+            <strong>Quick Test Messages:</strong><br>
+            <button onclick="sendQuickMessage('Hello! Can you help me?')">Greeting</button>
+            <button onclick="sendQuickMessage('What movies are playing tonight?')">Movie Query</button>
+            <button onclick="sendQuickMessage('Book tickets for Avatar at Cinema 1')">Booking Request</button>
+            <button onclick="sendQuickMessage('Show me today\'s revenue report')">Revenue Query</button>
+            <button onclick="sendCommand('status')">Status Command</button>
+            <button onclick="sendCommand('functions')">Functions Command</button>
+            <button onclick="sendCommand('help')">Help Command</button>
+        </div>
+
+        <div id="chatContainer" class="chat-container"></div>
+
+        <div class="input-container">
+            <input type="text" id="messageInput" placeholder="Type your message here..." disabled>
+            <button id="sendBtn" disabled>Send</button>
+        </div>
+    </div>
+
+    <script>
+        let socket = null;
+        let isConnected = false;
+
+        // DOM elements
+        const baseUrlSelect = document.getElementById('baseUrl');
+        const sessionIdInput = document.getElementById('sessionId');
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const statusDiv = document.getElementById('status');
+        const wsUrlSpan = document.getElementById('wsUrl');
+        const chatContainer = document.getElementById('chatContainer');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+
+        // Generate new session ID
+        function generateSessionId() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                const r = Math.random() * 16 | 0;
+                const v = c == 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+
+        // Initialize with a session ID
+        document.getElementById('generateSession').onclick = () => {
+            sessionIdInput.value = generateSessionId();
+        };
+
+        // Generate initial session ID
+        sessionIdInput.value = generateSessionId();
+
+        function updateStatus(status, message) {
+            statusDiv.className = `status ${status}`;
+            statusDiv.textContent = message;
+        }
+
+        function addMessage(sender, content, metadata = null, messageType = 'text') {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}`;
+
+            let metaInfo = '';
+            if (metadata) {
+                const parts = [];
+                if (metadata.processing_time) parts.push(`⏱️ ${metadata.processing_time}`);
+                if (metadata.function_calls_made > 0) parts.push(`⚡ ${metadata.function_calls_made} functions`);
+                if (metadata.handler) parts.push(`🤖 ${metadata.handler}`);
+                if (parts.length > 0) {
+                    metaInfo = `<div class="message-meta">${parts.join(' • ')}</div>`;
+                }
+            }
+
+            const functionIndicator = metadata && metadata.function_calls_made > 0 ?
+                `<span class="function-indicator">⚡ ${metadata.function_calls_made}</span>` : '';
+
+            messageDiv.innerHTML = `
+                ${content}${functionIndicator}
+                ${metaInfo}
+            `;
+
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function connect() {
+            const baseUrl = baseUrlSelect.value;
+            const sessionId = sessionIdInput.value;
+
+            if (!sessionId) {
+                alert('Please enter a session ID');
+                return;
+            }
+
+            const protocol = baseUrl.includes('localhost') ? 'ws' : 'wss';
+            const wsUrl = `${protocol}://${baseUrl}/ws/${sessionId}`;
+            wsUrlSpan.textContent = wsUrl;
+
+            updateStatus('connecting', 'Connecting...');
+
+            try {
+                socket = new WebSocket(wsUrl);
+
+                socket.onopen = (event) => {
+                    isConnected = true;
+                    updateStatus('connected', 'Connected');
+                    connectBtn.disabled = true;
+                    disconnectBtn.disabled = false;
+                    messageInput.disabled = false;
+                    sendBtn.disabled = false;
+
+                    addMessage('system', `Connected to SAMi Backend at ${wsUrl}`);
+                };
+
+                socket.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        const sender = data.type === 'system' ? 'system' :
+                                     data.type === 'error' ? 'error' : 'ai';
+
+                        addMessage(sender, data.content, data.metadata, data.type);
+                    } catch (e) {
+                        addMessage('system', `Raw message: ${event.data}`);
+                    }
+                };
+
+                socket.onclose = (event) => {
+                    isConnected = false;
+                    updateStatus('disconnected', 'Disconnected');
+                    connectBtn.disabled = false;
+                    disconnectBtn.disabled = true;
+                    messageInput.disabled = true;
+                    sendBtn.disabled = true;
+
+                    if (event.code === 1006) {
+                        addMessage('error', 'Connection lost unexpectedly');
+                    } else if (event.code === 1000) {
+                        addMessage('system', 'Connection closed normally');
+                    } else {
+                        addMessage('error', `Connection closed with code: ${event.code}`);
+                    }
+                };
+
+                socket.onerror = (error) => {
+                    addMessage('error', `WebSocket error: ${error.message || 'Connection failed'}`);
+                    updateStatus('disconnected', 'Connection failed');
+                };
+
+            } catch (error) {
+                addMessage('error', `Failed to create WebSocket: ${error.message}`);
+                updateStatus('disconnected', 'Failed to connect');
+            }
+        }
+
+        function disconnect() {
+            if (socket && isConnected) {
+                socket.close();
+            }
+        }
+
+        function sendMessage(content, messageType = 'chat') {
+            if (!isConnected || !socket) {
+                alert('Not connected to WebSocket');
+                return;
+            }
+
+            const message = {
+                type: messageType,
+                content: content
+            };
+
+            // Add user message to chat
+            addMessage('user', content);
+
+            // Send to WebSocket
+            socket.send(JSON.stringify(message));
+        }
+
+        function sendQuickMessage(content) {
+            sendMessage(content);
+        }
+
+        function sendCommand(command) {
+            sendMessage(command, 'command');
+        }
+
+        // Event listeners
+        connectBtn.onclick = connect;
+        disconnectBtn.onclick = disconnect;
+
+        sendBtn.onclick = () => {
+            const message = messageInput.value.trim();
+            if (message) {
+                sendMessage(message);
+                messageInput.value = '';
+            }
+        };
+
+        messageInput.onkeypress = (e) => {
+            if (e.key === 'Enter') {
+                sendBtn.click();
+            }
+        };
+
+        // Update WebSocket URL when base URL changes
+        baseUrlSelect.onchange = () => {
+            if (!isConnected) {
+                const baseUrl = baseUrlSelect.value;
+                const sessionId = sessionIdInput.value;
+                const protocol = baseUrl.includes('localhost') ? 'ws' : 'wss';
+                wsUrlSpan.textContent = sessionId ? `${protocol}://${baseUrl}/ws/${sessionId}` : 'Select session ID';
+            }
+        };
+
+        // Initial URL display
+        baseUrlSelect.onchange();
+    </script>
+</body>
+</html>

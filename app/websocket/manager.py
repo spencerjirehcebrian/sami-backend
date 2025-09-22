@@ -5,12 +5,14 @@ from app.services.chat_persistence_service import ChatPersistenceService
 import json
 import uuid
 import logging
+from datetime import datetime
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 websocket_router = APIRouter()
+
 
 class ConnectionManager:
     def __init__(self):
@@ -30,7 +32,7 @@ class ConnectionManager:
         except Exception as e:
             logger.error(f"Error ensuring chat session {session_id}: {e}")
         finally:
-            if 'db' in locals():
+            if "db" in locals():
                 db.close()
 
         logger.info(f"Total active connections: {len(self.active_connections)}")
@@ -85,10 +87,12 @@ class ConnectionManager:
             if not validated_message["valid"]:
                 return MessageHandler.create_error_response(
                     f"Invalid message format: {validated_message.get('error', 'Unknown error')}",
-                    session_id=session_id
+                    session_id=session_id,
                 )
 
-            logger.info(f"Processing {validated_message['type']} message from session {session_id}: {validated_message['content'][:100]}...")
+            logger.info(
+                f"Processing {validated_message['type']} message from session {session_id}: {validated_message['content'][:100]}..."
+            )
 
             # Save user message to database
             db = next(get_db())
@@ -96,29 +100,29 @@ class ConnectionManager:
 
             await chat_persistence.save_user_message(
                 session_id=session_id,
-                content=validated_message['content'],
-                message_type=validated_message['type'],
-                metadata=validated_message.get('metadata')
+                content=validated_message["content"],
+                message_type=validated_message["type"],
+                metadata=validated_message.get("metadata"),
             )
 
             # Process the validated message
-            response = await message_processor.process_message(validated_message, session_id)
+            response = await message_processor.process_message(
+                validated_message, session_id
+            )
 
             # Parse response to extract content and metadata for saving
             try:
                 response_data = json.loads(response)
                 await chat_persistence.save_ai_message(
                     session_id=session_id,
-                    content=response_data.get('content', ''),
-                    message_type=response_data.get('type', 'response'),
-                    metadata=response_data.get('metadata')
+                    content=response_data.get("content", ""),
+                    message_type=response_data.get("type", "response"),
+                    metadata=response_data.get("metadata"),
                 )
             except json.JSONDecodeError:
                 # Fallback if response is not valid JSON
                 await chat_persistence.save_ai_message(
-                    session_id=session_id,
-                    content=response,
-                    message_type='response'
+                    session_id=session_id, content=response, message_type="response"
                 )
 
             return response
@@ -127,10 +131,11 @@ class ConnectionManager:
             logger.error(f"Error processing message from session {session_id}: {e}")
             # Import here to avoid circular imports
             from app.websocket.handlers import MessageHandler
+
             return MessageHandler.create_error_response(
                 "I apologize, but I encountered an error processing your message. Please try again.",
                 session_id=session_id,
-                error_code="PROCESSING_ERROR"
+                error_code="PROCESSING_ERROR",
             )
         finally:
             if db:
@@ -144,8 +149,10 @@ class ConnectionManager:
         """Get a list of active session IDs"""
         return list(self.active_connections.keys())
 
+
 # Global connection manager instance
 manager = ConnectionManager()
+
 
 @websocket_router.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
@@ -157,10 +164,22 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
     try:
         # Send welcome message
+        welcome_content = f"""Welcome to SAMi Backend AI Assistant!
+
+I'm here to help you with:
+• Movie scheduling and management
+• Cinema operations and reporting
+• Booking assistance and customer service
+• Real-time data queries and analytics
+
+Type 'help' for available commands or just chat naturally!"""
+
         welcome_message = {
             "type": "system",
-            "content": f"Connected to SAMi Backend API. Session ID: {session_id}",
-            "session_id": session_id
+            "content": welcome_content,
+            "session_id": session_id,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "metadata": {"system_type": "welcome", "session_established": True},
         }
         await manager.send_message(session_id, json.dumps(welcome_message))
 
@@ -179,13 +198,16 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         logger.info(f"WebSocket disconnected for session: {session_id}")
         manager.disconnect(session_id)
     except Exception as e:
-        logger.error(f"Unexpected error in WebSocket connection for session {session_id}: {e}")
+        logger.error(
+            f"Unexpected error in WebSocket connection for session {session_id}: {e}"
+        )
         manager.disconnect(session_id)
+
 
 @websocket_router.get("/ws/status")
 async def websocket_status():
     """Get WebSocket connection status"""
     return {
         "active_connections": manager.get_connection_count(),
-        "active_sessions": manager.get_active_sessions()
+        "active_sessions": manager.get_active_sessions(),
     }
