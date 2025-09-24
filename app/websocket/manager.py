@@ -3,7 +3,6 @@ from typing import Dict, List
 from app.database import get_db
 from app.services.chat_persistence_service import ChatPersistenceService
 import json
-import uuid
 import logging
 from datetime import datetime
 

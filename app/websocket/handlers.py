@@ -1,8 +1,7 @@
 import json
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from datetime import datetime
-import uuid
 from app.gemini.processor import gemini_processor
 
 logger = logging.getLogger(__name__)

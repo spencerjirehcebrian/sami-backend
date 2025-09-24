@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.services.forecast_service import ForecastService
-from app.exceptions import ValidationError, BusinessLogicError, ResourceNotFoundError
+from app.exceptions import ValidationError, ResourceNotFoundError
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 from datetime import datetime
