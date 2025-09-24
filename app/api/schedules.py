@@ -61,6 +61,7 @@ async def get_schedules(
     cinema_id: Optional[str] = Query(None, description="Filter by cinema ID"),
     cinema_number: Optional[int] = Query(None, description="Filter by cinema number"),
     movie_id: Optional[str] = Query(None, description="Filter by movie ID"),
+    forecast_id: Optional[str] = Query(None, description="Filter by forecast ID"),
     limit: int = Query(100, ge=1, le=1000, description="Number of records to return (1-1000)"),
     offset: int = Query(0, ge=0, description="Number of records to skip"),
     page: Optional[int] = Query(None, ge=1, description="Page number (alternative to offset)"),
@@ -99,6 +100,7 @@ async def get_schedules(
             date_to=date_to,
             cinema_id=actual_cinema_id,
             movie_id=movie_id,
+            forecast_id=forecast_id,
             limit=limit,
             offset=offset,
             require_date_filter=require_date_filter
@@ -178,10 +180,20 @@ async def get_schedule(schedule_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("", response_model=Dict[str, Any])
-async def create_schedule(schedule_data: ScheduleCreate, db: Session = Depends(get_db)):
-    """Create a new schedule"""
+async def create_schedule(schedule_data: ScheduleCreate, response: Response, db: Session = Depends(get_db)):
+    """Create a new schedule
+
+    DEPRECATED: Direct schedule creation is deprecated.
+    Use POST /api/forecasts to create optimized schedules via forecast system.
+    """
     try:
         schedule_service = ScheduleService(db)
+
+        # Log deprecation warning
+        logger.warning("Direct schedule creation endpoint used - this is deprecated. Use forecast system instead.")
+
+        # Add deprecation header
+        response.headers["X-Deprecation-Warning"] = "Direct schedule creation is deprecated. Use POST /api/forecasts instead."
 
         # Validate time slot format
         try:
