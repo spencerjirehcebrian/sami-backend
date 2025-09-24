@@ -407,15 +407,128 @@ SCHEDULE_FUNCTIONS = [
     }
 ]
 
+# Forecast Management Functions
+FORECAST_FUNCTIONS = [
+    {
+        "name": "create_forecast",
+        "description": "Create a new forecast with AI-generated optimized schedules for a date range",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "date_range_start": {
+                    "type": "string",
+                    "description": "Start date for forecast in ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss)"
+                },
+                "date_range_end": {
+                    "type": "string",
+                    "description": "End date for forecast in ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss)"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Optional description for the forecast"
+                },
+                "optimization_parameters": {
+                    "type": "object",
+                    "description": "Optional optimization parameters",
+                    "properties": {
+                        "revenue_goal": {
+                            "type": "number",
+                            "description": "Revenue multiplier (0.5-2.0, default 1.0)"
+                        },
+                        "occupancy_goal": {
+                            "type": "number",
+                            "description": "Target occupancy rate (0.3-0.9, default 0.7)"
+                        },
+                        "movie_preferences": {
+                            "type": "object",
+                            "description": "Movie preferences as movie_id -> weight (0.1-2.0)"
+                        }
+                    }
+                },
+                "created_by": {
+                    "type": "string",
+                    "description": "User who created the forecast (optional, defaults to 'ai-assistant')"
+                }
+            },
+            "required": ["date_range_start", "date_range_end"]
+        }
+    },
+    {
+        "name": "get_all_forecasts",
+        "description": "Get list of all forecasts with their basic information and status",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "get_forecast_details",
+        "description": "Get detailed information about a specific forecast including parameters and metrics",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "forecast_id": {
+                    "type": "string",
+                    "description": "Forecast UUID"
+                }
+            },
+            "required": ["forecast_id"]
+        }
+    },
+    {
+        "name": "get_forecast_schedules",
+        "description": "Get all generated schedules for a specific forecast",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "forecast_id": {
+                    "type": "string",
+                    "description": "Forecast UUID"
+                }
+            },
+            "required": ["forecast_id"]
+        }
+    },
+    {
+        "name": "get_forecast_predictions",
+        "description": "Get prediction metrics and analysis data for a specific forecast",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "forecast_id": {
+                    "type": "string",
+                    "description": "Forecast UUID"
+                }
+            },
+            "required": ["forecast_id"]
+        }
+    },
+    {
+        "name": "regenerate_forecast",
+        "description": "Re-run optimization to generate new schedules for an existing forecast",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "forecast_id": {
+                    "type": "string",
+                    "description": "Forecast UUID to regenerate"
+                }
+            },
+            "required": ["forecast_id"]
+        }
+    }
+]
 
 # Combined list of all available functions
-ALL_FUNCTIONS = CINEMA_FUNCTIONS + MOVIE_FUNCTIONS + SCHEDULE_FUNCTIONS
+ALL_FUNCTIONS = CINEMA_FUNCTIONS + MOVIE_FUNCTIONS + SCHEDULE_FUNCTIONS + FORECAST_FUNCTIONS
 
 # Function categories for easier access
 FUNCTION_CATEGORIES = {
     "cinema": CINEMA_FUNCTIONS,
     "movie": MOVIE_FUNCTIONS,
-    "schedule": SCHEDULE_FUNCTIONS
+    "schedule": SCHEDULE_FUNCTIONS,
+    "forecast": FORECAST_FUNCTIONS
 }
 
 # Helper function to get functions by category

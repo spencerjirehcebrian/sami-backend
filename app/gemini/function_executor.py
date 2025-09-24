@@ -8,6 +8,7 @@ from typing import Dict, Any, List
 from app.services.cinema_service import cinema_service
 from app.services.movie_service import movie_service
 from app.services.schedule_service import schedule_service
+from app.services.forecast_service import forecast_service
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,14 @@ class FunctionExecutor:
             "update_schedule": self._execute_schedule_function,
             "cancel_schedule": self._execute_schedule_function,
             "get_available_time_slots": self._execute_schedule_function,
+
+            # Forecast functions
+            "create_forecast": self._execute_forecast_function,
+            "get_all_forecasts": self._execute_forecast_function,
+            "get_forecast_details": self._execute_forecast_function,
+            "get_forecast_schedules": self._execute_forecast_function,
+            "get_forecast_predictions": self._execute_forecast_function,
+            "regenerate_forecast": self._execute_forecast_function,
         }
 
     async def execute_function(self, function_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -218,6 +227,34 @@ class FunctionExecutor:
         else:
             raise ValueError(f"Unknown schedule function: {function_name}")
 
+    async def _execute_forecast_function(self, function_name: str, args: Dict[str, Any]) -> Any:
+        """Execute forecast-related functions"""
+        if function_name == "create_forecast":
+            from datetime import datetime
+
+            # Parse date strings to datetime objects
+            date_start = datetime.fromisoformat(args["date_range_start"].replace('Z', '+00:00'))
+            date_end = datetime.fromisoformat(args["date_range_end"].replace('Z', '+00:00'))
+
+            return await forecast_service.generate_complete_forecast(
+                date_range_start=date_start,
+                date_range_end=date_end,
+                optimization_parameters=args.get("optimization_parameters"),
+                created_by=args.get("created_by", "ai-assistant"),
+                description=args.get("description")
+            )
+        elif function_name == "get_all_forecasts":
+            return await forecast_service.get_all_forecasts()
+        elif function_name == "get_forecast_details":
+            return await forecast_service.get_forecast_by_id(args["forecast_id"])
+        elif function_name == "get_forecast_schedules":
+            return await forecast_service.get_forecast_schedules(args["forecast_id"])
+        elif function_name == "get_forecast_predictions":
+            return await forecast_service.get_forecast_predictions(args["forecast_id"])
+        elif function_name == "regenerate_forecast":
+            return await forecast_service.regenerate_forecast(args["forecast_id"])
+        else:
+            raise ValueError(f"Unknown forecast function: {function_name}")
 
     def get_available_functions(self) -> List[str]:
         """Get list of all available function names"""

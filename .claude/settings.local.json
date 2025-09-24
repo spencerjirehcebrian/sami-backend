@@ -3,7 +3,8 @@
     "allow": [
       "Bash(curl:*)",
       "WebSearch",
-      "WebFetch(domain:www.themoviedb.org)"
+      "WebFetch(domain:www.themoviedb.org)",
+      "Bash(poetry run:*)"
     ],
     "deny": [],
     "ask": []
