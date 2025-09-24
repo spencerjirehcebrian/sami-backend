@@ -1,6 +1,7 @@
 """
-Enhanced seed script for SAMi Backend Database
-Reduced schedule generation targeting ~200 schedules with proper timezone handling
+Seed script for SAMi Backend Database
+Seeds reference data: cinema types, movies, and cinemas
+Schedules are generated through the forecast system
 """
 
 import sys
@@ -13,24 +14,23 @@ from app.models.movie import Movie
 from app.models.cinema import Cinema, CinemaType
 from app.models.schedule import Schedule
 from app.models.chat import ChatSession, ChatMessage
-from datetime import datetime, timedelta, timezone
+from app.models.forecast import Forecast, PredictionData
+from datetime import datetime
 import uuid
-import random
 
 
 def seed_database():
-    """Seed database with cinema types, movies, cinemas, and reduced schedules"""
+    """Seed database with cinema types, movies, and cinemas"""
     db = SessionLocal()
 
     try:
-        print("Starting enhanced database seeding...")
-
-        # Define UTC+8 timezone
-        utc_plus_8 = timezone(timedelta(hours=8))
+        print("Starting database seeding...")
 
         # Clear existing data (optional - be careful in production!)
         print("Clearing existing data...")
-        db.query(Schedule).delete()
+        db.query(PredictionData).delete()  # Delete prediction data first (foreign key dependency)
+        db.query(Forecast).delete()  # Delete forecasts second
+        db.query(Schedule).delete()  # Delete schedules third
         db.query(Cinema).delete()
         db.query(Movie).delete()
         db.query(CinemaType).delete()
@@ -508,259 +508,12 @@ def seed_database():
         db.commit()
         print(f"Seeded {len(cinemas)} cinemas")
 
-        # Get all the data we need for schedule seeding
-        all_movies = db.query(Movie).all()
-        all_cinemas = db.query(Cinema).all()
-        all_cinema_types = {ct.id: ct for ct in db.query(CinemaType).all()}
-
-        # OPTIMIZED FULL MONTH SCHEDULE SEEDING WITH TIMING
-        print("Seeding movie schedules for entire month (optimized)...")
-
-        # Import time for performance measurement
-        import time
-
-        # Define UTC+8 timezone
-        utc_plus_8 = timezone(timedelta(hours=8))
-
-        # Configuration variables
-        schedule_days = 30  # Full month of schedules
-        shows_per_cinema_per_day = 4  # Average number of shows per cinema per day
-        operating_start_hour = 9  # 9 AM
-        operating_end_hour = 21  # 9 PM
-        max_runtime_minutes = 210  # 3.5 hours max (including movie + cleanup)
-        cleanup_time = 30  # 30 minutes cleanup between shows
-
-        # Get current date in UTC+8 timezone
-        local_now = datetime.now(utc_plus_8)
-        start_date = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-
-        print(
-            f"Configuration: {schedule_days} days, ~{shows_per_cinema_per_day} shows per cinema per day"
-        )
-        print(
-            f"Operating hours: {operating_start_hour}:00 AM to {operating_end_hour}:00 PM"
-        )
-        print(f"Max runtime per show: {max_runtime_minutes} minutes (3.5 hours)")
-
-        # Start timing
-        schedule_start_time = time.time()
-
-        # Pre-compute all random selections to avoid repeated random.choice() calls
-        total_estimated_schedules = (
-            schedule_days * len(all_cinemas) * shows_per_cinema_per_day
-        )
-
-        print(f"Expected schedules: ~{total_estimated_schedules}")
-        print(f"Local timezone: UTC+8, Start date (local): {start_date}")
-
-        precompute_start = time.time()
-        random_movie_indices = [
-            random.randint(0, len(all_movies) - 1)
-            for _ in range(total_estimated_schedules)
-        ]
-        random_occupancy_rates = [
-            random.uniform(0.3, 0.9) for _ in range(total_estimated_schedules)
-        ]
-        precompute_time = time.time() - precompute_start
-
-        # Pre-compute cinema type multipliers for faster lookup
-        cinema_type_multipliers = {
-            cinema.id: all_cinema_types[cinema.type].price_multiplier
-            for cinema in all_cinemas
-        }
-
-        # Pre-compute timezone offset for batch conversion
-        utc_offset_seconds = 8 * 3600  # UTC+8 in seconds
-
-        # Use list of dictionaries for bulk insert (much faster than ORM objects)
-        schedule_dicts = []
-        random_index = 0
-
-        print(
-            f"Pre-computed {len(random_movie_indices)} random selections in {precompute_time:.3f}s"
-        )
-        print(f"Processing {schedule_days} days × {len(all_cinemas)} cinemas...")
-
-        generation_start = time.time()
-        for day_offset in range(schedule_days):
-            current_date = start_date + timedelta(days=day_offset)
-
-            # Process all cinemas for this day
-            for cinema in all_cinemas:
-                cinema_type_multiplier = cinema_type_multipliers[cinema.id]
-
-                current_time_minutes = operating_start_hour * 60
-                shows_scheduled = 0
-
-                while (
-                    shows_scheduled < shows_per_cinema_per_day
-                    and current_time_minutes < operating_end_hour * 60
-                ):
-                    # Use pre-computed random selections
-                    if random_index >= len(random_movie_indices):
-                        break
-
-                    movie = all_movies[random_movie_indices[random_index]]
-                    occupancy_rate = random_occupancy_rates[random_index]
-                    random_index += 1
-
-                    # Calculate runtime and check fit
-                    actual_runtime = min(
-                        movie.duration + cleanup_time, max_runtime_minutes
-                    )
-                    if current_time_minutes + actual_runtime > operating_end_hour * 60:
-                        break
-
-                    # Find next available :00 or :30 slot
-                    current_hour = current_time_minutes // 60
-                    current_minute = current_time_minutes % 60
-
-                    # Round up to next :00 or :30 slot
-                    if current_minute <= 30:
-                        next_slot_minutes = current_hour * 60 + 30
-                    else:
-                        next_slot_minutes = (current_hour + 1) * 60
-
-                    # Add random padding up to 6 hours (in 30-minute increments)
-                    # 6 hours = 12 slots of 30 minutes each
-                    max_padding_slots = 12  # 6 hours / 0.5 hours = 12 slots
-                    padding_slots = random.randint(0, max_padding_slots)
-                    padding_minutes = padding_slots * 30
-
-                    actual_start_minutes = next_slot_minutes + padding_minutes
-
-                    if actual_start_minutes + actual_runtime > operating_end_hour * 60:
-                        break
-
-                    # Convert minutes back to hour/minute
-                    start_hour = actual_start_minutes // 60
-                    start_minute = actual_start_minutes % 60
-
-                    # PROPER TIMEZONE HANDLING - Create local time then convert to UTC
-                    local_time_slot = current_date.replace(
-                        hour=start_hour, minute=start_minute
-                    )
-                    utc_time_slot = local_time_slot.astimezone(timezone.utc)
-
-                    # Fast pricing calculation
-                    if start_hour >= 18:
-                        base_price = 15.0
-                    elif start_hour >= 15:
-                        base_price = 13.5
-                    else:
-                        base_price = 12.0
-
-                    unit_price = base_price * cinema_type_multiplier
-                    service_fee = round(unit_price * 0.1, 2)
-
-                    # Adjust occupancy based on time (simple lookup)
-                    if start_hour >= 19 or start_hour <= 15:
-                        final_occupancy = min(
-                            occupancy_rate + 0.2, 0.9
-                        )  # Boost peak times
-                    else:
-                        final_occupancy = max(
-                            occupancy_rate - 0.1, 0.3
-                        )  # Reduce off-peak
-
-                    current_sales = int(cinema.total_seats * final_occupancy)
-
-                    # Create dictionary for bulk insert (fastest)
-                    schedule_dict = {
-                        "id": uuid.uuid4(),
-                        "movie_id": movie.id,
-                        "cinema_id": cinema.id,
-                        "time_slot": utc_time_slot,  # Properly converted to UTC
-                        "unit_price": round(unit_price, 2),
-                        "service_fee": service_fee,
-                        "max_sales": cinema.total_seats,
-                        "current_sales": current_sales,
-                        "status": "active",
-                        "created_at": datetime.now(timezone.utc),
-                        "updated_at": datetime.now(timezone.utc),
-                    }
-
-                    schedule_dicts.append(schedule_dict)
-
-                    # Move to next slot
-                    current_time_minutes = actual_start_minutes + actual_runtime
-                    shows_scheduled += 1
-
-            # Progress indicator for long operations
-            if (day_offset + 1) % 5 == 0:
-                elapsed = time.time() - generation_start
-                print(
-                    f"  Processed {day_offset + 1}/{schedule_days} days in {elapsed:.2f}s..."
-                )
-
-        generation_time = time.time() - generation_start
-        print(f"Generated {len(schedule_dicts)} schedules in {generation_time:.3f}s")
-
-        # Use bulk insert for maximum speed (10-100x faster than individual inserts)
-        if schedule_dicts:
-            insert_start = time.time()
-            # Insert in chunks to avoid memory issues
-            chunk_size = 1000
-            for i in range(0, len(schedule_dicts), chunk_size):
-                chunk = schedule_dicts[i : i + chunk_size]
-                db.bulk_insert_mappings(Schedule, chunk)
-                if i + chunk_size < len(schedule_dicts):
-                    print(
-                        f"  Inserted {i + chunk_size}/{len(schedule_dicts)} schedules..."
-                    )
-
-            db.commit()
-            insert_time = time.time() - insert_start
-            print(
-                f"Bulk insert completed in {insert_time:.3f}s: {len(schedule_dicts)} schedules"
-            )
-
-        # Total timing
-        total_schedule_time = time.time() - schedule_start_time
-        print(f"\nSchedule Generation Performance:")
-        print(f"  Pre-computation: {precompute_time:.3f}s")
-        print(f"  Data generation: {generation_time:.3f}s")
-        print(f"  Database insert: {insert_time:.3f}s")
-        print(f"  Total time: {total_schedule_time:.3f}s")
-        print(f"  Rate: {len(schedule_dicts)/total_schedule_time:.0f} schedules/second")
-
-        print("Enhanced database seeding completed successfully!")
+        print("Database seeding completed successfully!")
         print("Summary:")
         print(f"   - Cinema Types: {len(cinema_types)}")
         print(f"   - Movies: {len(movies)}")
         print(f"   - Cinemas: {len(cinemas)}")
-        print(f"   - Schedules: {len(schedule_dicts)}")
-
-        # Calculate and display some statistics
-        total_revenue = sum(
-            (schedule_dict["unit_price"] + schedule_dict["service_fee"])
-            * schedule_dict["current_sales"]
-            for schedule_dict in schedule_dicts
-        )
-        total_tickets_sold = sum(
-            schedule_dict["current_sales"] for schedule_dict in schedule_dicts
-        )
-        total_capacity = sum(
-            schedule_dict["max_sales"] for schedule_dict in schedule_dicts
-        )
-        overall_occupancy = (
-            (total_tickets_sold / total_capacity) * 100 if total_capacity > 0 else 0
-        )
-
-        print(f"Seeded Statistics:")
-        print(f"   - Total Revenue: ${total_revenue:,.2f}")
-        print(f"   - Tickets Sold: {total_tickets_sold:,}")
-        print(f"   - Overall Occupancy: {overall_occupancy:.1f}%")
-
-        # Show timezone conversion examples for verification
-        print(f"\nTimezone Conversion Examples:")
-        for i in range(min(3, len(schedule_dicts))):  # Show first 3 schedules
-            schedule_dict = schedule_dicts[i]
-            utc_time = schedule_dict["time_slot"]
-            local_time = utc_time.astimezone(utc_plus_8)
-            print(
-                f"   Schedule {i+1}: UTC {utc_time.strftime('%Y-%m-%d %H:%M')} = Local {local_time.strftime('%Y-%m-%d %H:%M')} (UTC+8)"
-            )
+        print("\nSchedules will be generated through the forecast system.")
 
     except Exception as e:
         print(f"Error during seeding: {e}")
