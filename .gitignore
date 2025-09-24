@@ -176,7 +176,6 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
-test_*.py
 
 # Test output`
 test_report.txt

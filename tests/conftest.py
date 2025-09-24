@@ -21,15 +21,37 @@ def setup_test_database():
     try:
         # Create cinema types if they don't exist
         cinema_types_data = [
-            {"id": "standard", "name": "Standard", "description": "Traditional cinema experience", "price_multiplier": 1.0},
-            {"id": "premium", "name": "Premium", "description": "Enhanced experience", "price_multiplier": 1.5},
-            {"id": "imax", "name": "IMAX", "description": "Large format screens", "price_multiplier": 2.0},
-            {"id": "vip", "name": "VIP", "description": "Exclusive experience", "price_multiplier": 2.5},
+            {
+                "id": "standard",
+                "name": "Standard",
+                "description": "Traditional cinema experience",
+                "price_multiplier": 1.0,
+            },
+            {
+                "id": "premium",
+                "name": "Premium",
+                "description": "Enhanced experience",
+                "price_multiplier": 1.5,
+            },
+            {
+                "id": "imax",
+                "name": "IMAX",
+                "description": "Large format screens",
+                "price_multiplier": 2.0,
+            },
+            {
+                "id": "vip",
+                "name": "VIP",
+                "description": "Exclusive experience",
+                "price_multiplier": 2.5,
+            },
         ]
 
         for ct_data in cinema_types_data:
             # Check if cinema type already exists
-            existing = db.query(CinemaType).filter(CinemaType.id == ct_data["id"]).first()
+            existing = (
+                db.query(CinemaType).filter(CinemaType.id == ct_data["id"]).first()
+            )
             if not existing:
                 cinema_type = CinemaType(**ct_data)
                 db.add(cinema_type)
@@ -65,6 +87,7 @@ def sample_movie_data():
     """Sample movie data for testing."""
     import time
     import random
+
     timestamp = int(time.time())
     random_num = random.randint(1000, 9999)
     return {
@@ -72,7 +95,7 @@ def sample_movie_data():
         "duration": 120,
         "genre": "Action",
         "rating": "PG-13",
-        "description": "A test movie for API testing"
+        "description": "A test movie for API testing",
     }
 
 
@@ -81,6 +104,7 @@ def sample_cinema_data():
     """Sample cinema data for testing."""
     import time
     import random
+
     timestamp = int(time.time())
     random_num = random.randint(1000, 9999)
     unique_number = int(str(timestamp)[-4:] + str(random_num)[-2:])
@@ -89,7 +113,7 @@ def sample_cinema_data():
         "cinema_type": "standard",
         "total_seats": 100,
         "location": f"Test Location {timestamp}_{random_num}",
-        "features": ["Test features"]
+        "features": ["Test features"],
     }
 
 
@@ -97,12 +121,13 @@ def sample_cinema_data():
 def sample_schedule_data():
     """Sample schedule data for testing."""
     import time
+
     timestamp = int(time.time())
     return {
         "movie_id": f"test-movie-id-{timestamp}",
         "cinema_number": 1,
         "time_slot": "2024-12-01T20:00:00Z",
-        "price": 15.00
+        "price": 15.00,
     }
 
 
@@ -110,10 +135,11 @@ def sample_schedule_data():
 def sample_forecast_data():
     """Sample forecast data for testing."""
     import time
+
     timestamp = int(time.time())
     return {
         "date_range_start": "2024-12-01",
         "date_range_end": "2024-12-07",
         "description": f"Test forecast for a week {timestamp}",
-        "created_by": "test_user"
+        "created_by": "test_user",
     }

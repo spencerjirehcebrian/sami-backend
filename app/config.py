@@ -1,9 +1,14 @@
 from pydantic_settings import BaseSettings
 from typing import List
-from pydantic import field_validator
+from pydantic import field_validator, ConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = ConfigDict(
+        env_file=".env",
+        extra="ignore"  # Ignore extra fields from .env file
+    )
+
     DATABASE_URL: str
     GEMINI_API_KEY: str
     CORS_ORIGINS: str = "http://localhost:3000"
@@ -23,10 +28,6 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> List[str]:
         """Get CORS origins as a list"""
         return self.CORS_ORIGINS if isinstance(self.CORS_ORIGINS, list) else [self.CORS_ORIGINS]
-
-    class Config:
-        env_file = ".env"
-        extra = "ignore"  # Ignore extra fields from .env file
 
 
 settings = Settings()
