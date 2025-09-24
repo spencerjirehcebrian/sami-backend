@@ -12,6 +12,7 @@ class Schedule(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     movie_id = Column(UUID(as_uuid=True), ForeignKey("movies.id"), nullable=False)
     cinema_id = Column(UUID(as_uuid=True), ForeignKey("cinemas.id"), nullable=False)
+    forecast_id = Column(UUID(as_uuid=True), ForeignKey("forecasts.id", ondelete="CASCADE"), nullable=True)
     time_slot = Column(DateTime, nullable=False)
     unit_price = Column(Float, nullable=False)
     service_fee = Column(Float, nullable=False)
@@ -24,3 +25,4 @@ class Schedule(Base):
     # Relationships
     movie = relationship("Movie")
     cinema = relationship("Cinema", back_populates="schedules")
+    forecast = relationship("Forecast", back_populates="schedules")

@@ -56,59 +56,71 @@ The system maintains all existing movie and cinema management capabilities while
 
 ---
 
-## Phase 2: Database Migration
+## Phase 2: Database Migration ✅ COMPLETED
 **Goal**: Set up new database schema and modify existing tables
 
 ### Checklist
-- [ ] Create Alembic migration file
-- [ ] Add `forecasts` table with columns:
-  - [ ] `id` (UUID, PK)
-  - [ ] `name` (VARCHAR, NOT NULL)
-  - [ ] `description` (TEXT, nullable)
-  - [ ] `date_range_start` (TIMESTAMP, NOT NULL)
-  - [ ] `date_range_end` (TIMESTAMP, NOT NULL) 
-  - [ ] `status` (VARCHAR(20), DEFAULT 'generating')
-  - [ ] `optimization_parameters` (JSONB, nullable)
-  - [ ] `created_at` (TIMESTAMP, DEFAULT NOW())
-  - [ ] `created_by` (VARCHAR, NOT NULL)
-  - [ ] `total_schedules_generated` (INTEGER, DEFAULT 0)
-- [ ] Add `prediction_data` table with columns:
-  - [ ] `id` (UUID, PK)
-  - [ ] `forecast_id` (UUID, FK to forecasts, CASCADE DELETE)
-  - [ ] `metrics` (JSONB, NOT NULL)
-  - [ ] `confidence_score` (FLOAT, NOT NULL)
-  - [ ] `error_margin` (FLOAT, NOT NULL)
-  - [ ] `created_at` (TIMESTAMP, DEFAULT NOW())
-- [ ] Modify `schedules` table:
-  - [ ] Add `forecast_id` (UUID, nullable FK to forecasts, CASCADE DELETE)
-  - [ ] Create index `idx_schedules_forecast` on `forecast_id`
-- [ ] Run migration and verify existing schedules remain unaffected
+- [x] Create Alembic migration file
+- [x] Add `forecasts` table with columns:
+  - [x] `id` (UUID, PK)
+  - [x] `name` (VARCHAR, NOT NULL)
+  - [x] `description` (TEXT, nullable)
+  - [x] `date_range_start` (TIMESTAMP, NOT NULL)
+  - [x] `date_range_end` (TIMESTAMP, NOT NULL)
+  - [x] `status` (VARCHAR(20), DEFAULT 'generating')
+  - [x] `optimization_parameters` (JSONB, nullable)
+  - [x] `created_at` (TIMESTAMP, DEFAULT NOW())
+  - [x] `created_by` (VARCHAR, NOT NULL)
+  - [x] `total_schedules_generated` (INTEGER, DEFAULT 0)
+- [x] Add `prediction_data` table with columns:
+  - [x] `id` (UUID, PK)
+  - [x] `forecast_id` (UUID, FK to forecasts, CASCADE DELETE)
+  - [x] `metrics` (JSONB, NOT NULL)
+  - [x] `confidence_score` (FLOAT, NOT NULL)
+  - [x] `error_margin` (FLOAT, NOT NULL)
+  - [x] `created_at` (TIMESTAMP, DEFAULT NOW())
+- [x] Modify `schedules` table:
+  - [x] Add `forecast_id` (UUID, nullable FK to forecasts, CASCADE DELETE)
+  - [x] Create index `idx_schedules_forecast` on `forecast_id`
+- [x] Run migration and verify existing schedules remain unaffected
+
+### Migration Results
+- **Migration File**: `0edb4b07b264_add_forecast_system_tables.py`
+- **Database Verification**: ✅ All 876 existing schedules retain NULL forecast_id for backward compatibility
+- **Schema Validation**: ✅ All tables, columns, foreign keys, and indexes created successfully
+- **Relationships**: ✅ Forecast ↔ Schedule ↔ PredictionData relationships established
 
 ---
 
-## Phase 3: Model Creation
+## Phase 3: Model Creation ✅ COMPLETED
 **Goal**: Create SQLAlchemy models for new tables
 
 ### Checklist
-- [ ] Create `app/models/forecast.py`
-  - [ ] `Forecast` model with all fields
-  - [ ] Relationships to schedules and predictions
-  - [ ] Proper imports and base class inheritance
-- [ ] Update `app/models/forecast.py`
-  - [ ] `PredictionData` model with all fields
-  - [ ] Relationship back to forecast
-- [ ] Update `app/models/schedule.py`
-  - [ ] Add `forecast_id` column
-  - [ ] Add relationship to forecast
-- [ ] Update `app/models/__init__.py`
-  - [ ] Import and export new models
+- [x] Create `app/models/forecast.py`
+  - [x] `Forecast` model with all fields
+  - [x] Relationships to schedules and predictions
+  - [x] Proper imports and base class inheritance
+- [x] Update `app/models/forecast.py`
+  - [x] `PredictionData` model with all fields
+  - [x] Relationship back to forecast
+- [x] Update `app/models/schedule.py`
+  - [x] Add `forecast_id` column
+  - [x] Add relationship to forecast
+- [x] Update `app/models/__init__.py`
+  - [x] Import and export new models
+
+### Models Created
+- **Forecast**: Complete model with all fields, relationships to Schedule and PredictionData
+- **PredictionData**: Complete model with forecast relationship and JSONB metrics storage
+- **Schedule**: Updated with optional forecast_id and forecast relationship
+- **__init__.py**: Updated to export Forecast and PredictionData models
 
 ---
 
-## Phase 3: Service Development
+## Phase 4: Service Development
 **Goal**: Create business logic services for forecast system
 
-### 3a: Forecast Service
+### 4a: Forecast Service
 #### Checklist
 - [ ] Create `app/services/forecast_service.py`
 - [ ] Implement `ForecastService` class with methods:
@@ -123,7 +135,7 @@ The system maintains all existing movie and cinema management capabilities while
   - [ ] `get_forecast_schedules(forecast_id)` - get associated schedules
   - [ ] `get_forecast_predictions(forecast_id)` - get prediction data
 
-### 3b: Optimization Service  
+### 4b: Optimization Service  
 #### Checklist
 - [ ] Create `app/services/optimization_service.py`
 - [ ] Implement `OptimizationService` class with methods:
@@ -139,7 +151,7 @@ The system maintains all existing movie and cinema management capabilities while
   - [ ] `occupancy_goal`: 0.3 to 0.9 target rate (default 0.7)  
   - [ ] `movie_preferences`: dict with movie_id -> weight 0.1-2.0
 
-### 3c: Prediction Service
+### 4c: Prediction Service
 #### Checklist
 - [ ] Create `app/services/prediction_service.py`
 - [ ] Implement `PredictionService` class with methods:
@@ -151,7 +163,7 @@ The system maintains all existing movie and cinema management capabilities while
   - [ ] `_calculate_error_margin()` - mock error margin (10-20%)
   - [ ] `_format_metrics_json(schedule_metrics, forecast_metrics)` - final JSON
 
-### 3d: Service Integration
+### 4d: Service Integration
 #### Checklist
 - [ ] Update `app/services/__init__.py` to export new services
 - [ ] Create service orchestration in `ForecastService`:
@@ -161,10 +173,10 @@ The system maintains all existing movie and cinema management capabilities while
 
 ---
 
-## Phase 4: API Development
+## Phase 5: API Development
 **Goal**: Create forecast API and modify schedules API
 
-### 4a: Forecast API
+### 5a: Forecast API
 #### Checklist
 - [ ] Create `app/api/forecasts.py`
 - [ ] Implement endpoints:
@@ -178,7 +190,7 @@ The system maintains all existing movie and cinema management capabilities while
 - [ ] Add request/response models using Pydantic
 - [ ] Add proper error handling and HTTP status codes
 
-### 4b: Schedule API Modifications
+### 5b: Schedule API Modifications
 #### Checklist
 - [ ] Modify `app/api/schedules.py`:
   - [ ] Add deprecation warnings to direct schedule creation endpoints
@@ -189,7 +201,7 @@ The system maintains all existing movie and cinema management capabilities while
 - [ ] Update schedule response format to include forecast details
 - [ ] Add forecast context to all schedule operations
 
-### 4c: API Integration
+### 5c: API Integration
 #### Checklist
 - [ ] Add forecast router to `main.py`
 - [ ] Update CORS settings if needed
@@ -198,10 +210,10 @@ The system maintains all existing movie and cinema management capabilities while
 
 ---
 
-## Phase 5: AI Integration Updates
+## Phase 6: AI Integration Updates
 **Goal**: Update Gemini AI integration for forecast system
 
-### 5a: Function Schema Updates
+### 6a: Function Schema Updates
 #### Checklist
 - [ ] Update `app/gemini/function_schemas.py`:
   - [ ] Remove all analytics functions
@@ -214,7 +226,7 @@ The system maintains all existing movie and cinema management capabilities while
     - [ ] `regenerate_forecast` - re-run optimization
   - [ ] Update function categories and mappings
 
-### 5b: Function Executor Updates  
+### 6b: Function Executor Updates  
 #### Checklist
 - [ ] Update `app/gemini/function_executor.py`:
   - [ ] Remove analytics function execution methods
@@ -223,7 +235,7 @@ The system maintains all existing movie and cinema management capabilities while
     - [ ] Handle all forecast function calls properly
   - [ ] Update function mapping dictionary
 
-### 5c: AI System Updates
+### 6c: AI System Updates
 #### Checklist
 - [ ] Update `app/gemini/client.py` system instructions:
   - [ ] Change focus from analytics to schedule optimization
@@ -233,17 +245,17 @@ The system maintains all existing movie and cinema management capabilities while
 
 ---
 
-## Phase 6: Cleanup and Migration
+## Phase 7: Cleanup and Migration
 **Goal**: Remove analytics system and finalize changes
 
-### 6a: File Removal
+### 7a: File Removal
 #### Checklist
 - [ ] Delete `app/services/analytics_service.py`
 - [ ] Delete `app/api/analytics.py` 
 - [ ] Remove analytics imports from `app/services/__init__.py`
 - [ ] Remove analytics imports from `main.py`
 
-### 6b: Final Integration
+### 7b: Final Integration
 #### Checklist  
 - [ ] Update all import statements across the codebase
 - [ ] Update error handling and logging messages
@@ -253,7 +265,7 @@ The system maintains all existing movie and cinema management capabilities while
 - [ ] Verify existing functionality (movies, cinemas) still works
 - [ ] Update notification system to handle forecast events
 
-### 6c: Documentation Updates
+### 7c: Documentation Updates
 #### Checklist
 - [ ] Update API documentation
 - [ ] Update system architecture documentation  
