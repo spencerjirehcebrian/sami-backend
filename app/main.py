@@ -6,7 +6,6 @@ from app.websocket.manager import websocket_router
 from app.api.movies import router as movies_router
 from app.api.cinemas import router as cinemas_router
 from app.api.schedules import router as schedules_router
-from app.api.analytics import router as analytics_router
 from app.api.chat import router as chat_router
 from app.notifications.events import setup_database_event_handlers
 from app.database import test_db_connection, get_db_health
@@ -48,7 +47,6 @@ app.include_router(websocket_router)
 app.include_router(movies_router)
 app.include_router(cinemas_router)
 app.include_router(schedules_router)
-app.include_router(analytics_router)
 app.include_router(chat_router)
 
 # Setup database event handlers for notifications

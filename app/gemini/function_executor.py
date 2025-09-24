@@ -8,7 +8,6 @@ from typing import Dict, Any, List
 from app.services.cinema_service import cinema_service
 from app.services.movie_service import movie_service
 from app.services.schedule_service import schedule_service
-from app.services.analytics_service import analytics_service
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +41,6 @@ class FunctionExecutor:
             "update_schedule": self._execute_schedule_function,
             "cancel_schedule": self._execute_schedule_function,
             "get_available_time_slots": self._execute_schedule_function,
-
-            # Analytics functions
-            "get_revenue_report": self._execute_analytics_function,
-            "get_occupancy_report": self._execute_analytics_function,
-            "get_movie_performance": self._execute_analytics_function,
-            "get_daily_summary": self._execute_analytics_function,
         }
 
     async def execute_function(self, function_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -225,32 +218,6 @@ class FunctionExecutor:
         else:
             raise ValueError(f"Unknown schedule function: {function_name}")
 
-    async def _execute_analytics_function(self, function_name: str, args: Dict[str, Any]) -> Any:
-        """Execute analytics-related functions"""
-        method = getattr(analytics_service, function_name)
-
-        if function_name == "get_revenue_report":
-            return await method(
-                date_from=args.get("date_from"),
-                date_to=args.get("date_to"),
-                cinema_id=args.get("cinema_id"),
-                movie_id=args.get("movie_id")
-            )
-        elif function_name == "get_occupancy_report":
-            return await method(
-                date_from=args.get("date_from"),
-                date_to=args.get("date_to")
-            )
-        elif function_name == "get_movie_performance":
-            return await method(
-                date_from=args.get("date_from"),
-                date_to=args.get("date_to"),
-                limit=args.get("limit", 10)
-            )
-        elif function_name == "get_daily_summary":
-            return await method(args.get("date"))
-        else:
-            raise ValueError(f"Unknown analytics function: {function_name}")
 
     def get_available_functions(self) -> List[str]:
         """Get list of all available function names"""

@@ -407,99 +407,15 @@ SCHEDULE_FUNCTIONS = [
     }
 ]
 
-# Analytics and Reporting Functions
-ANALYTICS_FUNCTIONS = [
-    {
-        "name": "get_revenue_report",
-        "description": "Generate comprehensive revenue report with breakdowns by cinema, movie, and date",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "date_from": {
-                    "type": "string",
-                    "description": "Start date for report in ISO format (optional, defaults to last 30 days)"
-                },
-                "date_to": {
-                    "type": "string",
-                    "description": "End date for report in ISO format (optional, defaults to now)"
-                },
-                "cinema_id": {
-                    "type": "string",
-                    "description": "Filter by specific cinema UUID (optional)"
-                },
-                "movie_id": {
-                    "type": "string",
-                    "description": "Filter by specific movie UUID (optional)"
-                }
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "get_occupancy_report",
-        "description": "Generate occupancy analysis including cinema utilization, peak hours, and day patterns",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "date_from": {
-                    "type": "string",
-                    "description": "Start date for analysis in ISO format (optional, defaults to last 30 days)"
-                },
-                "date_to": {
-                    "type": "string",
-                    "description": "End date for analysis in ISO format (optional, defaults to now)"
-                }
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "get_movie_performance",
-        "description": "Get top performing movies analysis by revenue, ticket sales, and occupancy rate",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "date_from": {
-                    "type": "string",
-                    "description": "Start date for analysis in ISO format (optional, defaults to last 30 days)"
-                },
-                "date_to": {
-                    "type": "string",
-                    "description": "End date for analysis in ISO format (optional, defaults to now)"
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Number of top movies to return (optional, defaults to 10)"
-                }
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "get_daily_summary",
-        "description": "Get comprehensive summary for a specific day including revenue, schedules, and occupancy",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "date": {
-                    "type": "string",
-                    "description": "Date for summary in ISO format (optional, defaults to today)"
-                }
-            },
-            "required": []
-        }
-    }
-]
 
 # Combined list of all available functions
-ALL_FUNCTIONS = CINEMA_FUNCTIONS + MOVIE_FUNCTIONS + SCHEDULE_FUNCTIONS + ANALYTICS_FUNCTIONS
+ALL_FUNCTIONS = CINEMA_FUNCTIONS + MOVIE_FUNCTIONS + SCHEDULE_FUNCTIONS
 
 # Function categories for easier access
 FUNCTION_CATEGORIES = {
     "cinema": CINEMA_FUNCTIONS,
     "movie": MOVIE_FUNCTIONS,
-    "schedule": SCHEDULE_FUNCTIONS,
-    "analytics": ANALYTICS_FUNCTIONS
+    "schedule": SCHEDULE_FUNCTIONS
 }
 
 # Helper function to get functions by category
