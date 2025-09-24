@@ -100,11 +100,18 @@ async def get_schedules(
             date_to=date_to,
             cinema_id=actual_cinema_id,
             movie_id=movie_id,
-            forecast_id=forecast_id,
             limit=limit,
             offset=offset,
             require_date_filter=require_date_filter
         )
+
+        # Filter by forecast_id if provided (post-processing)
+        if forecast_id and "schedules" in result:
+            result["schedules"] = [
+                schedule for schedule in result["schedules"]
+                if schedule.get("forecast_id") == forecast_id
+            ]
+            result["total_count"] = len(result["schedules"])
 
         # Add pagination headers
         if "pagination" in result:
@@ -201,8 +208,21 @@ async def create_schedule(schedule_data: ScheduleCreate, response: Response, db:
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid time_slot format. Use ISO 8601 format.")
 
-        schedule_dict = schedule_data.dict()
-        return await schedule_service.create_schedule(**schedule_dict)
+        # Get cinema_id from cinema_number
+        from app.services.cinema_service import CinemaService
+        cinema_service = CinemaService(db)
+        cinema = await cinema_service.get_cinema_by_number(schedule_data.cinema_number)
+        if not cinema:
+            raise HTTPException(status_code=404, detail=f"Cinema number {schedule_data.cinema_number} not found")
+
+        # Transform parameters for service method
+        return await schedule_service.create_schedule(
+            movie_id=schedule_data.movie_id,
+            cinema_id=cinema["id"],
+            time_slot=schedule_data.time_slot,
+            unit_price=schedule_data.price,
+            max_sales=schedule_data.expected_attendance
+        )
     except HTTPException:
         raise
     except ConflictError as e:

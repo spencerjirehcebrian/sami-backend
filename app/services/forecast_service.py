@@ -308,13 +308,9 @@ class ForecastService:
     ) -> Dict[str, Any]:
         """Create forecast and generate schedules and predictions in one operation"""
         try:
-            # Import here to avoid circular imports
-            from .optimization_service import optimization_service
-            from .prediction_service import prediction_service
-
             logger.info(f"Starting complete forecast generation from {date_range_start} to {date_range_end}")
 
-            # Step 1: Create forecast
+            # Step 1: Create basic forecast
             forecast_data = await self.create_forecast(
                 date_range_start=date_range_start,
                 date_range_end=date_range_end,
@@ -327,40 +323,78 @@ class ForecastService:
             forecast = self.db.query(Forecast).filter(Forecast.id == forecast_id).first()
 
             try:
-                # Step 2: Generate schedules using optimization service
-                schedules = await optimization_service.generate_schedules_for_forecast(forecast)
+                # Try to import and use AI services
+                try:
+                    from .optimization_service import optimization_service
+                    from .prediction_service import prediction_service
 
-                # Update the forecast with actual schedule count
-                await self.update_total_schedules_generated(forecast_id, len(schedules))
+                    # Step 2: Generate schedules using optimization service
+                    schedules = await optimization_service.generate_schedules_for_forecast(forecast)
 
-                # Step 3: Generate predictions using prediction service
-                prediction_data = await prediction_service.generate_predictions(forecast_id, schedules)
+                    # Update the forecast with actual schedule count
+                    await self.update_total_schedules_generated(forecast_id, len(schedules))
 
-                # Step 4: Update status to completed
-                await self.update_forecast_status(forecast_id, "completed")
+                    # Step 3: Generate predictions using prediction service
+                    prediction_data = await prediction_service.generate_predictions(forecast_id, schedules)
 
-                logger.info(f"Complete forecast generation successful for {forecast_id}")
+                    # Step 4: Update status to completed
+                    await self.update_forecast_status(forecast_id, "completed")
 
-                return {
-                    "forecast": {
+                    logger.info(f"Complete forecast generation successful for {forecast_id}")
+                    return {
                         "id": forecast_id,
                         "name": forecast.name,
+                        "description": forecast.description,
+                        "date_range_start": forecast.date_range_start.isoformat(),
+                        "date_range_end": forecast.date_range_end.isoformat(),
                         "status": "completed",
-                        "schedules_generated": len(schedules)
-                    },
-                    "predictions": {
-                        "confidence_score": prediction_data.confidence_score,
-                        "error_margin": prediction_data.error_margin,
-                        "key_metrics": prediction_data.metrics
-                    },
-                    "message": f"Forecast generated successfully with {len(schedules)} schedules"
-                }
+                        "optimization_parameters": forecast.optimization_parameters,
+                        "created_at": forecast.created_at.isoformat(),
+                        "created_by": forecast.created_by,
+                        "total_schedules_generated": len(schedules),
+                        "message": f"Forecast generated successfully with {len(schedules)} schedules"
+                    }
+
+                except (ImportError, ModuleNotFoundError, AttributeError) as import_error:
+                    # AI services not available - create basic forecast without optimization
+                    logger.warning(f"AI services not available, creating basic forecast: {import_error}")
+
+                    # Update status to completed (basic forecast)
+                    await self.update_forecast_status(forecast_id, "completed")
+
+                    return {
+                        "id": forecast_id,
+                        "name": forecast.name,
+                        "description": forecast.description,
+                        "date_range_start": forecast.date_range_start.isoformat(),
+                        "date_range_end": forecast.date_range_end.isoformat(),
+                        "status": "completed",
+                        "optimization_parameters": forecast.optimization_parameters,
+                        "created_at": forecast.created_at.isoformat(),
+                        "created_by": forecast.created_by,
+                        "total_schedules_generated": 0,
+                        "message": "Basic forecast created successfully (AI optimization unavailable)"
+                    }
 
             except Exception as generation_error:
-                # Mark forecast as failed and re-raise
+                # Mark forecast as failed and provide fallback response
                 await self.update_forecast_status(forecast_id, "failed")
                 logger.error(f"Forecast generation failed: {generation_error}")
-                raise
+
+                # Return the basic forecast data even if processing failed
+                return {
+                    "id": forecast_id,
+                    "name": forecast.name,
+                    "description": forecast.description,
+                    "date_range_start": forecast.date_range_start.isoformat(),
+                    "date_range_end": forecast.date_range_end.isoformat(),
+                    "status": "failed",
+                    "optimization_parameters": forecast.optimization_parameters,
+                    "created_at": forecast.created_at.isoformat(),
+                    "created_by": forecast.created_by,
+                    "total_schedules_generated": 0,
+                    "message": f"Forecast created but processing failed: {str(generation_error)}"
+                }
 
         except Exception as e:
             logger.error(f"Error in complete forecast generation: {e}")

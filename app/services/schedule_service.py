@@ -289,41 +289,36 @@ class ScheduleService:
                 minutes=movie_duration + 30
             )  # 30 min cleanup buffer
 
-            # Build base conflict query using EXISTS for performance
-            conflict_query = self.db.query(func.count(Schedule.id)).filter(
+            # Build base conflict query using simpler approach
+            # Get all potentially conflicting schedules and check overlaps in Python
+            potential_conflicts = self.db.query(Schedule).join(Movie).filter(
                 and_(
                     Schedule.cinema_id == cinema_id,
                     Schedule.status == "active",
-                    # Time overlap logic: two time ranges overlap if:
-                    # start1 < end2 AND start2 < end1
-                    Schedule.time_slot < movie_end_time,
-                    func.datetime(
-                        Schedule.time_slot,
-                        "+"
-                        + func.cast(
-                            func.coalesce(
-                                self.db.query(Movie.duration)
-                                .filter(Movie.id == Schedule.movie_id)
-                                .scalar_subquery(),
-                                0,
-                            )
-                            + 30,
-                            func.text("text"),
-                        )
-                        + " minutes",
-                    )
-                    > time_slot,
+                    # Basic date filtering to reduce results
+                    Schedule.time_slot >= time_slot - timedelta(hours=6),
+                    Schedule.time_slot <= movie_end_time + timedelta(hours=6),
                 )
-            )
+            ).all()
 
-            # Exclude specific schedule if provided (for updates)
-            if exclude_schedule_id:
-                conflict_query = conflict_query.filter(
-                    Schedule.id != exclude_schedule_id
+            # Check for actual overlaps using Python datetime arithmetic
+            conflict_count = 0
+            for existing_schedule in potential_conflicts:
+                if exclude_schedule_id and str(existing_schedule.id) == exclude_schedule_id:
+                    continue
+
+                # Calculate existing schedule end time
+                existing_end_time = existing_schedule.time_slot + timedelta(
+                    minutes=existing_schedule.movie.duration + 30
                 )
 
-            # Execute optimized count query
-            conflict_count = conflict_query.scalar()
+                # Check for overlap: start1 < end2 AND start2 < end1
+                if (time_slot < existing_end_time and
+                    existing_schedule.time_slot < movie_end_time):
+                    conflict_count += 1
+                    break  # Found at least one conflict
+
+            # Return true if any conflicts found
             return conflict_count > 0
 
         except Exception as e:

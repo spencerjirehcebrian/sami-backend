@@ -12,17 +12,16 @@ router = APIRouter(prefix="/api/cinemas", tags=["cinemas"])
 
 class CinemaCreate(BaseModel):
     number: int
-    type_id: str
+    cinema_type: str
     total_seats: int
-    location: Optional[str] = None
-    features: Optional[str] = None
+    location: str
+    features: Optional[List[str]] = None
 
 class CinemaUpdate(BaseModel):
     number: Optional[int] = None
-    type_id: Optional[str] = None
     total_seats: Optional[int] = None
     location: Optional[str] = None
-    features: Optional[str] = None
+    features: Optional[List[str]] = None
 
 @router.get("", response_model=List[Dict[str, Any]])
 async def get_cinemas(
@@ -115,7 +114,7 @@ async def update_cinema(
 
         # Update with only provided fields
         update_dict = cinema_data.dict(exclude_unset=True)
-        return await cinema_service.update_cinema(cinema_number, **update_dict)
+        return await cinema_service.update_cinema(existing_cinema["id"], **update_dict)
     except HTTPException:
         raise
     except Exception as e:
