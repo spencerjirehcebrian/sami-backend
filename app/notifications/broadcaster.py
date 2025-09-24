@@ -13,7 +13,7 @@ class NotificationBroadcaster:
             "movies": [],
             "cinemas": [],
             "schedules": [],
-            "analytics": []
+            "forecasts": []
         }
 
     async def broadcast_change(
@@ -27,7 +27,7 @@ class NotificationBroadcaster:
         Broadcast database change to all connected clients
 
         Args:
-            entity_type: Type of entity (movies, cinemas, schedules, analytics)
+            entity_type: Type of entity (movies, cinemas, schedules, forecasts)
             operation: Type of operation (create, update, delete)
             entity_id: ID of the affected entity
             data: Additional data about the change

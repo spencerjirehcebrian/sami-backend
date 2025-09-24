@@ -38,7 +38,7 @@ class GeminiClient:
 
 Your role is to help cinema managers optimize their operations through:
 - AI-powered schedule generation and optimization
-- Predictive analytics and revenue forecasting
+- Predictive forecasting and revenue optimization
 - Scenario planning with multiple optimization strategies
 - Data-driven decision support for schedule management
 

@@ -66,27 +66,6 @@ class NotificationHandler:
         except Exception as e:
             logger.error(f"Error handling cache invalidation: {e}")
 
-    @staticmethod
-    async def handle_analytics_update(report_type: str, data: Dict[str, Any]):
-        """
-        Handle analytics update notifications
-
-        Args:
-            report_type: Type of analytics report updated
-            data: Updated analytics data
-        """
-        try:
-            await broadcaster.broadcast_change(
-                entity_type="analytics",
-                operation="update",
-                entity_id=report_type,
-                data=data
-            )
-
-            logger.info(f"Handled analytics update for {report_type}")
-
-        except Exception as e:
-            logger.error(f"Error handling analytics update: {e}")
 
     @staticmethod
     async def handle_system_notification(message: str, message_type: str = "info"):

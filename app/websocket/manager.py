@@ -179,7 +179,7 @@ I'm here to help you with:
 * Movie scheduling and management
 * Cinema operations and reporting
 * Booking assistance and customer service
-* Real-time data queries and analytics
+* Schedule forecasting and optimization
 \n\n
 Type 'help' for available commands or just chat naturally!"""
 
