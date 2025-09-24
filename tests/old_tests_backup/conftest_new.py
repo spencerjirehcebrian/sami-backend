@@ -8,7 +8,7 @@ import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 from app.main import app
-from tests.utils import PromptTester, generate_test_session_id
+from tests.utils_new import PromptTester, generate_test_session_id
 
 
 # REST API Testing Fixtures
