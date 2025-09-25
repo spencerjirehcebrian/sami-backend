@@ -7,9 +7,15 @@ Minimal essential fixtures only - no over-engineering.
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 from app.main import app
-from app.database import SessionLocal
+from app.database import SessionLocal, get_db
 from app.models.cinema import CinemaType
+from app.models.movie import Movie
+from app.models.cinema import Cinema
+from app.models.schedule import Schedule
+from app.models.forecast import Forecast, PredictionData
 from tests.utils import PromptTester, generate_test_session_id
 
 
@@ -62,6 +68,93 @@ def setup_test_database():
         print(f"Warning: Could not setup test cinema types: {e}")
     finally:
         db.close()
+
+
+# Database Cleanup Utilities
+def cleanup_test_data(db_session=None):
+    """Clean up test data in proper dependency order."""
+    if db_session is None:
+        db_session = SessionLocal()
+
+    try:
+        # Delete in dependency order to avoid foreign key constraints
+
+        # Leverage CASCADE deletes - delete forecasts first, related data deletes automatically
+        # This is much faster than manually deleting in dependency order
+        deleted_forecasts = db_session.query(Forecast).filter(
+            Forecast.created_by == 'test_user'
+        ).delete(synchronize_session=False)
+
+        # 4. Delete test movies (created by tests with timestamps in names)
+        deleted_movies = db_session.query(Movie).filter(
+            Movie.title.like('%Test Movie%')
+        ).delete(synchronize_session=False)
+
+        # 5. Delete test cinemas (created by tests with test locations)
+        deleted_cinemas = db_session.query(Cinema).filter(
+            Cinema.location.like('%Test Location%')
+        ).delete(synchronize_session=False)
+
+        db_session.commit()
+
+        print(f"Database cleanup completed: "
+              f"{deleted_forecasts} forecasts (CASCADE), "
+              f"{deleted_movies} movies, "
+              f"{deleted_cinemas} cinemas deleted")
+
+    except Exception as e:
+        db_session.rollback()
+        print(f"Error during cleanup: {e}")
+    finally:
+        if db_session != SessionLocal():
+            db_session.close()
+
+
+# Global tracking for cleanup efficiency
+_cleanup_stats = {
+    "class_cleanups_performed": 0,
+    "items_cleaned_by_classes": 0
+}
+
+def track_cleanup_performed(items_cleaned):
+    """Track that class-level cleanup was performed."""
+    global _cleanup_stats
+    _cleanup_stats["class_cleanups_performed"] += 1
+    _cleanup_stats["items_cleaned_by_classes"] += items_cleaned
+
+# Optimized session management for cleanup operations
+_cleanup_session = None
+
+def get_cleanup_session():
+    """Get a reusable session for cleanup operations."""
+    global _cleanup_session
+    if _cleanup_session is None:
+        _cleanup_session = SessionLocal()
+    return _cleanup_session
+
+def close_cleanup_session():
+    """Close the cleanup session when done."""
+    global _cleanup_session
+    if _cleanup_session is not None:
+        _cleanup_session.close()
+        _cleanup_session = None
+
+@pytest.fixture(scope="class", autouse=True)
+def cleanup_after_test_class():
+    """Automatically clean up test data after each test class."""
+    # Reset cleanup tracking for this class
+    global _cleanup_stats
+    _cleanup_stats["class_cleanups_performed"] = 0
+    _cleanup_stats["items_cleaned_by_classes"] = 0
+
+    yield  # This runs before the test class
+
+    # Only run global cleanup if class-level cleanup didn't handle everything
+    # This avoids redundant database operations
+    if _cleanup_stats["class_cleanups_performed"] == 0:
+        cleanup_test_data()  # This runs after the test class
+    else:
+        print(f"Skipped redundant global cleanup - class-level cleanup handled {_cleanup_stats['items_cleaned_by_classes']} items")
 
 
 # REST API Testing Fixtures

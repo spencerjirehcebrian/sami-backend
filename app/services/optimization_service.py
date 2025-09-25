@@ -69,7 +69,7 @@ class OptimizationService:
                 self.db.add_all(schedules)
                 self.db.commit()
 
-            service_logger.info(
+            logger.info(
                 "Schedule generation completed successfully",
                 schedules_generated=len(schedules),
                 forecast_id=str(forecast.id),
@@ -83,7 +83,7 @@ class OptimizationService:
 
         except Exception as e:
             self.db.rollback()
-            service_logger.error(
+            logger.error(
                 "Failed to generate schedules for forecast",
                 error=str(e),
                 error_type=type(e).__name__,

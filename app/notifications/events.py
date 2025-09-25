@@ -311,9 +311,9 @@ def setup_database_event_handlers():
                         entity_id=str(target.id),
                         data={
                             "movie_id": str(target.movie_id),
-                            "cinema_number": target.cinema_number,
+                            "cinema_number": target.cinema.number if target.cinema else None,
                             "time_slot": target.time_slot.isoformat() if target.time_slot else None,
-                            "price": float(target.price) if target.price else None
+                            "price": float(target.unit_price) if target.unit_price else None
                         }
                     ))
                 else:
@@ -323,9 +323,9 @@ def setup_database_event_handlers():
                         entity_id=str(target.id),
                         data={
                             "movie_id": str(target.movie_id),
-                            "cinema_number": target.cinema_number,
+                            "cinema_number": target.cinema.number if target.cinema else None,
                             "time_slot": target.time_slot.isoformat() if target.time_slot else None,
-                            "price": float(target.price) if target.price else None
+                            "price": float(target.unit_price) if target.unit_price else None
                         }
                     ))
             except RuntimeError:
@@ -337,9 +337,9 @@ def setup_database_event_handlers():
                     entity_id=str(target.id),
                     data={
                         "movie_id": str(target.movie_id),
-                        "cinema_number": target.cinema_number,
+                        "cinema_number": target.cinema.number if target.cinema else None,
                         "time_slot": target.time_slot.isoformat() if target.time_slot else None,
-                        "price": float(target.price) if target.price else None
+                        "price": float(target.unit_price) if target.unit_price else None
                     }
                 ))
                 loop.close()
@@ -362,9 +362,9 @@ def setup_database_event_handlers():
                         entity_id=str(target.id),
                         data={
                             "movie_id": str(target.movie_id),
-                            "cinema_number": target.cinema_number,
+                            "cinema_number": target.cinema.number if target.cinema else None,
                             "time_slot": target.time_slot.isoformat() if target.time_slot else None,
-                            "price": float(target.price) if target.price else None
+                            "price": float(target.unit_price) if target.unit_price else None
                         }
                     ))
                 else:
@@ -374,9 +374,9 @@ def setup_database_event_handlers():
                         entity_id=str(target.id),
                         data={
                             "movie_id": str(target.movie_id),
-                            "cinema_number": target.cinema_number,
+                            "cinema_number": target.cinema.number if target.cinema else None,
                             "time_slot": target.time_slot.isoformat() if target.time_slot else None,
-                            "price": float(target.price) if target.price else None
+                            "price": float(target.unit_price) if target.unit_price else None
                         }
                     ))
             except RuntimeError:
@@ -388,9 +388,9 @@ def setup_database_event_handlers():
                     entity_id=str(target.id),
                     data={
                         "movie_id": str(target.movie_id),
-                        "cinema_number": target.cinema_number,
+                        "cinema_number": target.cinema.number if target.cinema else None,
                         "time_slot": target.time_slot.isoformat() if target.time_slot else None,
-                        "price": float(target.price) if target.price else None
+                        "price": float(target.unit_price) if target.unit_price else None
                     }
                 ))
                 loop.close()
@@ -412,7 +412,7 @@ def setup_database_event_handlers():
                         operation="delete",
                         entity_id=str(target.id),
                         data={
-                            "cinema_number": target.cinema_number,
+                            "cinema_number": target.cinema.number if target.cinema else None,
                             "time_slot": target.time_slot.isoformat() if target.time_slot else None
                         }
                     ))
@@ -422,7 +422,7 @@ def setup_database_event_handlers():
                         operation="delete",
                         entity_id=str(target.id),
                         data={
-                            "cinema_number": target.cinema_number,
+                            "cinema_number": target.cinema.number if target.cinema else None,
                             "time_slot": target.time_slot.isoformat() if target.time_slot else None
                         }
                     ))
@@ -434,7 +434,7 @@ def setup_database_event_handlers():
                     operation="delete",
                     entity_id=str(target.id),
                     data={
-                        "cinema_number": target.cinema_number,
+                        "cinema_number": target.cinema.number if target.cinema else None,
                         "time_slot": target.time_slot.isoformat() if target.time_slot else None
                     }
                 ))
