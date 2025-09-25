@@ -5,10 +5,11 @@ from app.database import get_db
 from app.models.forecast import Forecast, PredictionData
 from app.models.schedule import Schedule
 from app.notifications.broadcaster import broadcaster
+from app.logging import get_logger, add_service_context
 from datetime import datetime
-import logging
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+
 
 class ForecastService:
     """Service class for forecast management operations"""
@@ -16,24 +17,81 @@ class ForecastService:
     def __init__(self, db: Session = None):
         self.db = db or next(get_db())
 
+    def _estimate_schedule_count(
+        self, days: int, parameters: Dict[str, Any] = None
+    ) -> int:
+        """Estimate the number of schedules that will be generated"""
+        # Conservative estimates based on new algorithm:
+        # - Average 2.5 time slots per day (0-5 range)
+        # - Average 20 cinemas available
+        # - Average 60% cinema utilization per time slot
+
+        avg_slots_per_day = 2.5
+        avg_cinemas = 20
+        avg_utilization = 0.6
+
+        estimated = int(days * avg_slots_per_day * avg_cinemas * avg_utilization)
+
+        # Adjust based on parameters if provided
+        if parameters:
+            # Revenue goal might affect schedule density
+            revenue_goal = parameters.get("revenue_goal", 1.0)
+            if revenue_goal > 1.2:
+                estimated = int(
+                    estimated * 1.1
+                )  # More schedules for higher revenue goals
+            elif revenue_goal < 0.8:
+                estimated = int(
+                    estimated * 0.9
+                )  # Fewer schedules for lower revenue goals
+
+        return max(estimated, 0)
+
     async def create_forecast(
         self,
         date_range_start: datetime,
         date_range_end: datetime,
         optimization_parameters: Dict[str, Any] = None,
         created_by: str = "user",
-        description: str = None
+        description: str = None,
     ) -> Dict[str, Any]:
         """Create a new forecast with auto-generated name"""
+        service_logger = add_service_context(
+            logger, "forecast_service", "create_forecast",
+            date_range_start=date_range_start.isoformat(),
+            date_range_end=date_range_end.isoformat(),
+            created_by=created_by
+        )
+        service_logger.info("Creating new forecast")
+
         try:
             # Auto-generate name based on date range
-            start_str = date_range_start.strftime('%Y-%m-%d')
-            end_str = date_range_end.strftime('%Y-%m-%d')
+            start_str = date_range_start.strftime("%Y-%m-%d")
+            end_str = date_range_end.strftime("%Y-%m-%d")
             name = f"Forecast {start_str} to {end_str}"
 
             # Validate date range
             if date_range_start >= date_range_end:
                 raise ValueError("Start date must be before end date")
+
+            # Calculate estimated schedule count for safety checks
+            date_range_days = (date_range_end - date_range_start).days + 1
+            estimated_schedules = self._estimate_schedule_count(
+                date_range_days, optimization_parameters
+            )
+
+            if estimated_schedules > 2000:
+                service_logger.warning(
+                    "Large forecast requested",
+                    estimated_schedules=estimated_schedules,
+                    date_range_days=date_range_days,
+                    performance_warning="high_load"
+                )
+                # Could optionally limit the date range or provide warning
+                if date_range_days > 30:
+                    raise ValueError(
+                        f"Date range too large ({date_range_days} days). Maximum allowed is 30 days for performance reasons."
+                    )
 
             forecast = Forecast(
                 name=name,
@@ -43,7 +101,7 @@ class ForecastService:
                 status="generating",
                 optimization_parameters=optimization_parameters,
                 created_by=created_by,
-                total_schedules_generated=0
+                total_schedules_generated=0,
             )
 
             self.db.add(forecast)
@@ -59,11 +117,12 @@ class ForecastService:
                     "name": forecast.name,
                     "status": forecast.status,
                     "date_range_start": forecast.date_range_start.isoformat(),
-                    "date_range_end": forecast.date_range_end.isoformat()
-                }
+                    "date_range_end": forecast.date_range_end.isoformat(),
+                    "estimated_schedules": estimated_schedules,
+                },
             )
 
-            return {
+            result = {
                 "id": str(forecast.id),
                 "name": forecast.name,
                 "description": forecast.description,
@@ -74,17 +133,35 @@ class ForecastService:
                 "created_at": forecast.created_at.isoformat(),
                 "created_by": forecast.created_by,
                 "total_schedules_generated": forecast.total_schedules_generated,
-                "message": f"Forecast '{name}' created successfully"
+                "estimated_schedules": estimated_schedules,
+                "message": f"Forecast '{name}' created successfully",
             }
+
+            service_logger.info(
+                "Forecast created successfully",
+                forecast_id=str(forecast.id),
+                forecast_name=name,
+                estimated_schedules=estimated_schedules,
+                date_range_days=date_range_days
+            )
+
+            return result
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Error creating forecast: {e}")
+            service_logger.error(
+                "Failed to create forecast",
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True
+            )
             raise
 
     async def get_all_forecasts(self) -> List[Dict[str, Any]]:
         """Get all forecasts with their basic details"""
         try:
-            forecasts = self.db.query(Forecast).order_by(Forecast.created_at.desc()).all()
+            forecasts = (
+                self.db.query(Forecast).order_by(Forecast.created_at.desc()).all()
+            )
             return [
                 {
                     "id": str(forecast.id),
@@ -96,7 +173,11 @@ class ForecastService:
                     "optimization_parameters": forecast.optimization_parameters,
                     "created_at": forecast.created_at.isoformat(),
                     "created_by": forecast.created_by,
-                    "total_schedules_generated": forecast.total_schedules_generated
+                    "total_schedules_generated": forecast.total_schedules_generated,
+                    "date_range_days": (
+                        forecast.date_range_end - forecast.date_range_start
+                    ).days
+                    + 1,
                 }
                 for forecast in forecasts
             ]
@@ -107,15 +188,29 @@ class ForecastService:
     async def get_forecast_by_id(self, forecast_id: str) -> Optional[Dict[str, Any]]:
         """Get a specific forecast by ID with detailed information"""
         try:
-            forecast = self.db.query(Forecast).filter(Forecast.id == forecast_id).first()
+            forecast = (
+                self.db.query(Forecast).filter(Forecast.id == forecast_id).first()
+            )
             if not forecast:
                 return None
 
-            # Get schedule count
-            schedule_count = self.db.query(Schedule).filter(Schedule.forecast_id == forecast_id).count()
+            # Get actual schedule count
+            schedule_count = (
+                self.db.query(Schedule)
+                .filter(Schedule.forecast_id == forecast_id)
+                .count()
+            )
 
             # Get prediction data
-            prediction = self.db.query(PredictionData).filter(PredictionData.forecast_id == forecast_id).first()
+            prediction = (
+                self.db.query(PredictionData)
+                .filter(PredictionData.forecast_id == forecast_id)
+                .first()
+            )
+
+            date_range_days = (
+                forecast.date_range_end - forecast.date_range_start
+            ).days + 1
 
             return {
                 "id": str(forecast.id),
@@ -123,19 +218,41 @@ class ForecastService:
                 "description": forecast.description,
                 "date_range_start": forecast.date_range_start.isoformat(),
                 "date_range_end": forecast.date_range_end.isoformat(),
+                "date_range_days": date_range_days,
                 "status": forecast.status,
                 "optimization_parameters": forecast.optimization_parameters,
                 "created_at": forecast.created_at.isoformat(),
                 "created_by": forecast.created_by,
                 "total_schedules_generated": forecast.total_schedules_generated,
                 "actual_schedules_count": schedule_count,
+                "schedules_per_day": (
+                    round(schedule_count / date_range_days, 1)
+                    if date_range_days > 0
+                    else 0
+                ),
                 "has_predictions": prediction is not None,
-                "prediction_data": {
-                    "metrics": prediction.metrics,
-                    "confidence_score": prediction.confidence_score,
-                    "error_margin": prediction.error_margin,
-                    "created_at": prediction.created_at.isoformat()
-                } if prediction else None
+                "prediction_data": (
+                    {
+                        "metrics": prediction.metrics,
+                        "confidence_score": prediction.confidence_score,
+                        "error_margin": prediction.error_margin,
+                        "created_at": prediction.created_at.isoformat(),
+                    }
+                    if prediction
+                    else None
+                ),
+                "performance_metrics": {
+                    "generation_efficiency": (
+                        "high"
+                        if schedule_count > 100
+                        else "medium" if schedule_count > 50 else "low"
+                    ),
+                    "data_density": (
+                        round(schedule_count / date_range_days, 1)
+                        if date_range_days > 0
+                        else 0
+                    ),
+                },
             }
         except Exception as e:
             logger.error(f"Error getting forecast by ID {forecast_id}: {e}")
@@ -144,12 +261,18 @@ class ForecastService:
     async def delete_forecast(self, forecast_id: str) -> Dict[str, Any]:
         """Delete a forecast and all associated schedules and predictions (cascade)"""
         try:
-            forecast = self.db.query(Forecast).filter(Forecast.id == forecast_id).first()
+            forecast = (
+                self.db.query(Forecast).filter(Forecast.id == forecast_id).first()
+            )
             if not forecast:
                 raise ValueError(f"Forecast with ID {forecast_id} not found")
 
             forecast_name = forecast.name
-            schedule_count = self.db.query(Schedule).filter(Schedule.forecast_id == forecast_id).count()
+            schedule_count = (
+                self.db.query(Schedule)
+                .filter(Schedule.forecast_id == forecast_id)
+                .count()
+            )
 
             # Delete forecast (cascade will handle schedules and predictions)
             self.db.delete(forecast)
@@ -160,29 +283,32 @@ class ForecastService:
                 entity_type="forecasts",
                 operation="delete",
                 entity_id=forecast_id,
-                data={
-                    "name": forecast_name,
-                    "schedules_deleted": schedule_count
-                }
+                data={"name": forecast_name, "schedules_deleted": schedule_count},
             )
 
             return {
                 "id": forecast_id,
-                "message": f"Forecast '{forecast_name}' and {schedule_count} schedules deleted successfully"
+                "name": forecast_name,
+                "schedules_deleted": schedule_count,
+                "message": f"Forecast '{forecast_name}' and {schedule_count} schedules deleted successfully",
             }
         except Exception as e:
             self.db.rollback()
             logger.error(f"Error deleting forecast: {e}")
             raise
 
-    async def update_forecast_status(self, forecast_id: str, status: str) -> Dict[str, Any]:
+    async def update_forecast_status(
+        self, forecast_id: str, status: str
+    ) -> Dict[str, Any]:
         """Update the status of a forecast"""
         try:
             valid_statuses = ["generating", "completed", "failed"]
             if status not in valid_statuses:
                 raise ValueError(f"Status must be one of: {valid_statuses}")
 
-            forecast = self.db.query(Forecast).filter(Forecast.id == forecast_id).first()
+            forecast = (
+                self.db.query(Forecast).filter(Forecast.id == forecast_id).first()
+            )
             if not forecast:
                 raise ValueError(f"Forecast with ID {forecast_id} not found")
 
@@ -199,8 +325,8 @@ class ForecastService:
                 data={
                     "name": forecast.name,
                     "status": forecast.status,
-                    "previous_status": old_status
-                }
+                    "previous_status": old_status,
+                },
             )
 
             return {
@@ -208,7 +334,7 @@ class ForecastService:
                 "name": forecast.name,
                 "status": forecast.status,
                 "previous_status": old_status,
-                "message": f"Forecast status updated from '{old_status}' to '{status}'"
+                "message": f"Forecast status updated from '{old_status}' to '{status}'",
             }
         except Exception as e:
             self.db.rollback()
@@ -219,11 +345,13 @@ class ForecastService:
         """Get all schedules associated with a forecast"""
         try:
             # Verify forecast exists
-            forecast = self.db.query(Forecast).filter(Forecast.id == forecast_id).first()
+            forecast = (
+                self.db.query(Forecast).filter(Forecast.id == forecast_id).first()
+            )
             if not forecast:
                 raise ValueError(f"Forecast with ID {forecast_id} not found")
 
-            # Get schedules with movie and cinema details
+            # Get schedules with movie and cinema details using optimized joins
             schedules = (
                 self.db.query(Schedule)
                 .filter(Schedule.forecast_id == forecast_id)
@@ -241,21 +369,33 @@ class ForecastService:
                         "id": str(schedule.movie.id),
                         "title": schedule.movie.title,
                         "genre": schedule.movie.genre,
-                        "duration": schedule.movie.duration
+                        "duration": schedule.movie.duration,
+                        "rating": schedule.movie.rating,
                     },
                     "cinema": {
                         "id": str(schedule.cinema.id),
                         "number": schedule.cinema.number,
                         "location": schedule.cinema.location,
-                        "total_seats": schedule.cinema.total_seats
+                        "total_seats": schedule.cinema.total_seats,
                     },
                     "time_slot": schedule.time_slot.isoformat(),
-                    "unit_price": schedule.unit_price,
-                    "service_fee": schedule.service_fee,
+                    "day_of_week": schedule.time_slot.strftime("%A"),
+                    "time_of_day": schedule.time_slot.strftime("%H:%M"),
+                    "unit_price": float(schedule.unit_price),
+                    "service_fee": float(schedule.service_fee),
+                    "total_price": float(schedule.unit_price + schedule.service_fee),
                     "max_sales": schedule.max_sales,
                     "current_sales": schedule.current_sales,
+                    "available_seats": schedule.max_sales - schedule.current_sales,
+                    "occupancy_rate": (
+                        round(
+                            (schedule.max_sales / schedule.cinema.total_seats) * 100, 1
+                        )
+                        if schedule.cinema.total_seats > 0
+                        else 0
+                    ),
                     "status": schedule.status,
-                    "created_at": schedule.created_at.isoformat()
+                    "created_at": schedule.created_at.isoformat(),
                 }
                 for schedule in schedules
             ]
@@ -263,15 +403,23 @@ class ForecastService:
             logger.error(f"Error getting forecast schedules: {e}")
             raise
 
-    async def get_forecast_predictions(self, forecast_id: str) -> Optional[Dict[str, Any]]:
+    async def get_forecast_predictions(
+        self, forecast_id: str
+    ) -> Optional[Dict[str, Any]]:
         """Get prediction data for a forecast"""
         try:
             # Verify forecast exists
-            forecast = self.db.query(Forecast).filter(Forecast.id == forecast_id).first()
+            forecast = (
+                self.db.query(Forecast).filter(Forecast.id == forecast_id).first()
+            )
             if not forecast:
                 raise ValueError(f"Forecast with ID {forecast_id} not found")
 
-            prediction = self.db.query(PredictionData).filter(PredictionData.forecast_id == forecast_id).first()
+            prediction = (
+                self.db.query(PredictionData)
+                .filter(PredictionData.forecast_id == forecast_id)
+                .first()
+            )
             if not prediction:
                 return None
 
@@ -280,20 +428,41 @@ class ForecastService:
                 "forecast_id": str(prediction.forecast_id),
                 "metrics": prediction.metrics,
                 "confidence_score": prediction.confidence_score,
+                "confidence_percent": int(prediction.confidence_score * 100),
                 "error_margin": prediction.error_margin,
-                "created_at": prediction.created_at.isoformat()
+                "error_margin_percent": int(prediction.error_margin * 100),
+                "created_at": prediction.created_at.isoformat(),
+                "quality_assessment": {
+                    "confidence_level": (
+                        "high"
+                        if prediction.confidence_score > 0.8
+                        else "medium" if prediction.confidence_score > 0.65 else "low"
+                    ),
+                    "reliability": (
+                        "good"
+                        if prediction.error_margin < 0.15
+                        else "fair" if prediction.error_margin < 0.22 else "poor"
+                    ),
+                },
             }
         except Exception as e:
             logger.error(f"Error getting forecast predictions: {e}")
             raise
 
-    async def update_total_schedules_generated(self, forecast_id: str, count: int) -> None:
+    async def update_total_schedules_generated(
+        self, forecast_id: str, count: int
+    ) -> None:
         """Update the total schedules generated count for a forecast"""
         try:
-            forecast = self.db.query(Forecast).filter(Forecast.id == forecast_id).first()
+            forecast = (
+                self.db.query(Forecast).filter(Forecast.id == forecast_id).first()
+            )
             if forecast:
                 forecast.total_schedules_generated = count
                 self.db.commit()
+                logger.info(
+                    f"Updated schedule count for forecast {forecast_id}: {count}"
+                )
         except Exception as e:
             logger.error(f"Error updating schedules count: {e}")
             raise
@@ -304,23 +473,27 @@ class ForecastService:
         date_range_end: datetime,
         optimization_parameters: Dict[str, Any] = None,
         created_by: str = "user",
-        description: str = None
+        description: str = None,
     ) -> Dict[str, Any]:
         """Create forecast and generate schedules and predictions in one operation"""
         try:
-            logger.info(f"Starting complete forecast generation from {date_range_start} to {date_range_end}")
+            logger.info(
+                f"Starting complete forecast generation from {date_range_start} to {date_range_end}"
+            )
 
-            # Step 1: Create basic forecast
+            # Step 1: Create basic forecast (includes safety checks)
             forecast_data = await self.create_forecast(
                 date_range_start=date_range_start,
                 date_range_end=date_range_end,
                 optimization_parameters=optimization_parameters,
                 created_by=created_by,
-                description=description
+                description=description,
             )
 
             forecast_id = forecast_data["id"]
-            forecast = self.db.query(Forecast).filter(Forecast.id == forecast_id).first()
+            forecast = (
+                self.db.query(Forecast).filter(Forecast.id == forecast_id).first()
+            )
 
             try:
                 # Try to import and use AI services
@@ -329,35 +502,90 @@ class ForecastService:
                     from .prediction_service import prediction_service
 
                     # Step 2: Generate schedules using optimization service
-                    schedules = await optimization_service.generate_schedules_for_forecast(forecast)
+                    logger.info(
+                        f"Generating optimized schedules for forecast {forecast_id}"
+                    )
+                    schedules = (
+                        await optimization_service.generate_schedules_for_forecast(
+                            forecast
+                        )
+                    )
 
                     # Update the forecast with actual schedule count
-                    await self.update_total_schedules_generated(forecast_id, len(schedules))
+                    await self.update_total_schedules_generated(
+                        forecast_id, len(schedules)
+                    )
 
                     # Step 3: Generate predictions using prediction service
-                    prediction_data = await prediction_service.generate_predictions(forecast_id, schedules)
+                    logger.info(
+                        f"Generating predictions for {len(schedules)} schedules"
+                    )
+                    prediction_data = await prediction_service.generate_predictions(
+                        forecast_id, schedules
+                    )
 
                     # Step 4: Update status to completed
                     await self.update_forecast_status(forecast_id, "completed")
 
-                    logger.info(f"Complete forecast generation successful for {forecast_id}")
+                    logger.info(
+                        f"Complete forecast generation successful for {forecast_id} - {len(schedules)} schedules generated"
+                    )
+
                     return {
                         "id": forecast_id,
                         "name": forecast.name,
                         "description": forecast.description,
                         "date_range_start": forecast.date_range_start.isoformat(),
                         "date_range_end": forecast.date_range_end.isoformat(),
+                        "date_range_days": (
+                            forecast.date_range_end - forecast.date_range_start
+                        ).days
+                        + 1,
                         "status": "completed",
                         "optimization_parameters": forecast.optimization_parameters,
                         "created_at": forecast.created_at.isoformat(),
                         "created_by": forecast.created_by,
                         "total_schedules_generated": len(schedules),
-                        "message": f"Forecast generated successfully with {len(schedules)} schedules"
+                        "schedules_per_day": round(
+                            len(schedules)
+                            / (
+                                (
+                                    forecast.date_range_end - forecast.date_range_start
+                                ).days
+                                + 1
+                            ),
+                            1,
+                        ),
+                        "prediction_summary": (
+                            {
+                                "confidence_percent": int(
+                                    prediction_data.confidence_score * 100
+                                ),
+                                "error_margin_percent": int(
+                                    prediction_data.error_margin * 100
+                                ),
+                            }
+                            if prediction_data
+                            else None
+                        ),
+                        "performance": {
+                            "generation_time": "optimized",
+                            "data_quality": (
+                                "high" if len(schedules) > 100 else "medium"
+                            ),
+                        },
+                        "message": f"Forecast generated successfully with {len(schedules)} schedules",
                     }
 
-                except (ImportError, ModuleNotFoundError, AttributeError) as import_error:
+                except (
+                    ImportError,
+                    ModuleNotFoundError,
+                    AttributeError,
+                ) as import_error:
                     # AI services not available - create basic forecast without optimization
-                    logger.warning(f"AI services not available, creating basic forecast: {import_error}")
+                    logger.warning(
+                        f"AI services not available, creating basic forecast: {import_error}"
+                    )
 
                     # Update status to completed (basic forecast)
                     await self.update_forecast_status(forecast_id, "completed")
@@ -373,7 +601,7 @@ class ForecastService:
                         "created_at": forecast.created_at.isoformat(),
                         "created_by": forecast.created_by,
                         "total_schedules_generated": 0,
-                        "message": "Basic forecast created successfully (AI optimization unavailable)"
+                        "message": "Basic forecast created successfully (AI optimization unavailable)",
                     }
 
             except Exception as generation_error:
@@ -393,7 +621,10 @@ class ForecastService:
                     "created_at": forecast.created_at.isoformat(),
                     "created_by": forecast.created_by,
                     "total_schedules_generated": 0,
-                    "message": f"Forecast created but processing failed: {str(generation_error)}"
+                    "error_details": str(generation_error)[
+                        :200
+                    ],  # Truncate long error messages
+                    "message": f"Forecast created but processing failed: {str(generation_error)}",
                 }
 
         except Exception as e:
@@ -407,7 +638,9 @@ class ForecastService:
             from .optimization_service import optimization_service
             from .prediction_service import prediction_service
 
-            forecast = self.db.query(Forecast).filter(Forecast.id == forecast_id).first()
+            forecast = (
+                self.db.query(Forecast).filter(Forecast.id == forecast_id).first()
+            )
             if not forecast:
                 raise ValueError(f"Forecast with ID {forecast_id} not found")
 
@@ -418,33 +651,52 @@ class ForecastService:
 
             try:
                 # Delete existing schedules and predictions (cascade will handle this)
-                existing_schedules = self.db.query(Schedule).filter(Schedule.forecast_id == forecast_id).all()
+                existing_schedules = (
+                    self.db.query(Schedule)
+                    .filter(Schedule.forecast_id == forecast_id)
+                    .all()
+                )
+                existing_count = len(existing_schedules)
+
                 for schedule in existing_schedules:
                     self.db.delete(schedule)
 
-                existing_predictions = self.db.query(PredictionData).filter(PredictionData.forecast_id == forecast_id).all()
+                existing_predictions = (
+                    self.db.query(PredictionData)
+                    .filter(PredictionData.forecast_id == forecast_id)
+                    .all()
+                )
                 for prediction in existing_predictions:
                     self.db.delete(prediction)
 
                 self.db.commit()
+                logger.info(
+                    f"Deleted {existing_count} existing schedules for regeneration"
+                )
 
                 # Generate new schedules and predictions
-                schedules = await optimization_service.generate_schedules_for_forecast(forecast)
+                schedules = await optimization_service.generate_schedules_for_forecast(
+                    forecast
+                )
                 await self.update_total_schedules_generated(forecast_id, len(schedules))
 
-                prediction_data = await prediction_service.generate_predictions(forecast_id, schedules)
+                prediction_data = await prediction_service.generate_predictions(
+                    forecast_id, schedules
+                )
 
                 # Update status to completed
                 await self.update_forecast_status(forecast_id, "completed")
 
                 return {
                     "forecast_id": forecast_id,
-                    "schedules_generated": len(schedules),
+                    "previous_schedules": existing_count,
+                    "new_schedules": len(schedules),
+                    "improvement": len(schedules) - existing_count,
                     "predictions": {
                         "confidence_score": prediction_data.confidence_score,
-                        "error_margin": prediction_data.error_margin
+                        "error_margin": prediction_data.error_margin,
                     },
-                    "message": f"Forecast regenerated successfully with {len(schedules)} schedules"
+                    "message": f"Forecast regenerated successfully - {len(schedules)} schedules generated (was {existing_count})",
                 }
 
             except Exception as generation_error:
@@ -455,6 +707,7 @@ class ForecastService:
         except Exception as e:
             logger.error(f"Error regenerating forecast: {e}")
             raise
+
 
 # Global forecast service instance
 forecast_service = ForecastService()

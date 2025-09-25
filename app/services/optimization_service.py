@@ -5,11 +5,12 @@ from app.models.movie import Movie
 from app.models.cinema import Cinema, CinemaType
 from app.models.schedule import Schedule
 from app.models.forecast import Forecast
+from app.logging import get_logger, add_service_context
 from datetime import datetime, timedelta
 import random
-import logging
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+
 
 class OptimizationService:
     """Service class for schedule generation and optimization"""
@@ -17,7 +18,9 @@ class OptimizationService:
     def __init__(self, db: Session = None):
         self.db = db or next(get_db())
 
-    async def generate_schedules_for_forecast(self, forecast: Forecast) -> List[Schedule]:
+    async def generate_schedules_for_forecast(
+        self, forecast: Forecast
+    ) -> List[Schedule]:
         """Main entry point for generating optimized schedules for a forecast"""
         try:
             logger.info(f"Starting schedule generation for forecast {forecast.id}")
@@ -29,55 +32,79 @@ class OptimizationService:
             if not movies or not cinemas:
                 raise ValueError("No movies or cinemas available for scheduling")
 
-            # Generate time slots for the date range
-            time_slots = self._generate_time_slots(forecast.date_range_start, forecast.date_range_end)
+            # Generate variable time slots (0-5 per day)
+            time_slots = self._generate_time_slots(
+                forecast.date_range_start, forecast.date_range_end
+            )
             logger.info(f"Generated {len(time_slots)} time slots")
 
-            # Generate schedules
+            # Generate schedules with variable cinema utilization
             schedules = []
             for time_slot in time_slots:
-                for cinema in cinemas:
-                    # Select movie based on time slot and parameters
-                    movie = self._select_movie_for_slot(
-                        time_slot,
-                        movies,
-                        forecast.optimization_parameters or {}
-                    )
+                # Variable cinema utilization per time slot (40-80%)
+                utilization_rate = random.uniform(0.4, 0.8)
+                num_active_cinemas = int(len(cinemas) * utilization_rate)
 
-                    if movie:
-                        schedule = self._create_realistic_schedule(
-                            movie,
-                            cinema,
-                            time_slot,
-                            forecast
+                if num_active_cinemas > 0:
+                    active_cinemas = random.sample(cinemas, k=num_active_cinemas)
+
+                    for cinema, cinema_type in active_cinemas:
+                        movie = self._select_movie_for_slot(
+                            time_slot, movies, forecast.optimization_parameters or {}
                         )
-                        schedules.append(schedule)
+
+                        if movie:
+                            schedule = self._create_realistic_schedule(
+                                movie, (cinema, cinema_type), time_slot, forecast
+                            )
+                            schedules.append(schedule)
 
             # Apply optimization parameters
-            schedules = self._apply_parameters(schedules, forecast.optimization_parameters or {})
+            schedules = self._apply_parameters(
+                schedules, forecast.optimization_parameters or {}
+            )
 
-            # Save schedules to database
-            for schedule in schedules:
-                self.db.add(schedule)
+            # Bulk insert for better performance
+            if schedules:
+                self.db.add_all(schedules)
+                self.db.commit()
 
-            self.db.commit()
-            logger.info(f"Generated {len(schedules)} schedules for forecast {forecast.id}")
-
+            service_logger.info(
+                "Schedule generation completed successfully",
+                schedules_generated=len(schedules),
+                forecast_id=str(forecast.id),
+                performance_metrics={
+                    "schedules_per_day": round(len(schedules) / ((forecast.date_range_end - forecast.date_range_start).days + 1), 2),
+                    "total_time_slots": len(time_slots),
+                    "utilization_efficiency": "optimized"
+                }
+            )
             return schedules
 
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Error generating schedules for forecast: {e}")
+            service_logger.error(
+                "Failed to generate schedules for forecast",
+                error=str(e),
+                error_type=type(e).__name__,
+                forecast_id=str(forecast.id),
+                exc_info=True
+            )
             raise
 
     async def _get_available_movies(self) -> List[Movie]:
         """Get all available movies for scheduling"""
         try:
             movies = self.db.query(Movie).all()
-            logger.info(f"Found {len(movies)} available movies")
+            logger.info("Retrieved available movies", movie_count=len(movies))
             return movies
         except Exception as e:
-            logger.error(f"Error getting available movies: {e}")
+            logger.error(
+                "Failed to retrieve available movies",
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True
+            )
             raise
 
     async def _get_available_cinemas(self) -> List[Tuple[Cinema, CinemaType]]:
@@ -88,23 +115,54 @@ class OptimizationService:
                 .join(CinemaType, Cinema.type == CinemaType.id)
                 .all()
             )
-            logger.info(f"Found {len(cinemas_with_types)} available cinemas")
+            logger.info(
+                "Retrieved available cinemas",
+                cinema_count=len(cinemas_with_types)
+            )
             return cinemas_with_types
         except Exception as e:
-            logger.error(f"Error getting available cinemas: {e}")
+            logger.error(
+                "Failed to retrieve available cinemas",
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True
+            )
             raise
 
-    def _generate_time_slots(self, start_date: datetime, end_date: datetime) -> List[datetime]:
-        """Generate 30-minute time slots from 9 AM to 11 PM for each day in range"""
+    def _generate_time_slots(
+        self, start_date: datetime, end_date: datetime
+    ) -> List[datetime]:
+        """Generate realistic variable time slots with day-of-week weighting (0-5 per day)"""
         time_slots = []
         current_date = start_date.date()
         end_date_only = end_date.date()
 
+        # Available time slots per day
+        available_slots = [9, 12, 15, 18, 21]  # 9 AM, 12 PM, 3 PM, 6 PM, 9 PM
+
         while current_date <= end_date_only:
-            # Generate slots for this day (9 AM to 11 PM, every 30 minutes)
-            for hour in range(9, 23):  # 9 AM to 10:30 PM (last slot)
-                for minute in [0, 30]:
-                    slot_time = datetime.combine(current_date, datetime.min.time().replace(hour=hour, minute=minute))
+            weekday = current_date.weekday()  # 0=Monday, 6=Sunday
+
+            # Weight by day of week for more realism
+            if weekday in [4, 5, 6]:  # Friday, Saturday, Sunday
+                # Weekend: More likely to have more showings
+                num_slots_today = random.choices(
+                    range(0, 6), weights=[5, 10, 15, 25, 30, 15]  # Favor 3-5 slots
+                )[0]
+            elif weekday in [0, 1, 2, 3]:  # Monday-Thursday
+                # Weekdays: More conservative
+                num_slots_today = random.choices(
+                    range(0, 6), weights=[15, 25, 30, 20, 8, 2]  # Favor 1-3 slots
+                )[0]
+
+            if num_slots_today > 0:
+                # Randomly select which time slots to use
+                selected_hours = random.sample(available_slots, k=num_slots_today)
+
+                for hour in selected_hours:
+                    slot_time = datetime.combine(
+                        current_date, datetime.min.time().replace(hour=hour, minute=0)
+                    )
                     time_slots.append(slot_time)
 
             current_date += timedelta(days=1)
@@ -112,10 +170,7 @@ class OptimizationService:
         return time_slots
 
     def _select_movie_for_slot(
-        self,
-        time_slot: datetime,
-        movies: List[Movie],
-        parameters: Dict[str, Any]
+        self, time_slot: datetime, movies: List[Movie], parameters: Dict[str, Any]
     ) -> Optional[Movie]:
         """Select appropriate movie for a given time slot based on optimization parameters"""
         if not movies:
@@ -139,7 +194,7 @@ class OptimizationService:
 
             # Boost popular genres during prime time
             if is_prime_time:
-                if movie.genre.lower() in ['action', 'adventure', 'thriller', 'drama']:
+                if movie.genre.lower() in ["action", "adventure", "thriller", "drama"]:
                     base_weight *= 1.5
 
             # Add some randomization to avoid perfect patterns
@@ -152,7 +207,7 @@ class OptimizationService:
         if weighted_movies:
             # Sort by weight and pick from top choices with some randomization
             weighted_movies.sort(key=lambda x: x[1], reverse=True)
-            top_choices = weighted_movies[:max(3, len(weighted_movies) // 3)]
+            top_choices = weighted_movies[: max(3, len(weighted_movies) // 3)]
             return random.choice(top_choices)[0]
 
         return random.choice(movies)
@@ -162,7 +217,7 @@ class OptimizationService:
         movie: Movie,
         cinema_info: Tuple[Cinema, CinemaType],
         time_slot: datetime,
-        forecast: Forecast
+        forecast: Forecast,
     ) -> Schedule:
         """Create a realistic schedule entry with proper pricing and occupancy"""
         cinema, cinema_type = cinema_info
@@ -184,12 +239,18 @@ class OptimizationService:
             occupancy_rate = random.uniform(0.20, 0.50)
 
         # Apply occupancy goal from parameters
-        occupancy_goal = forecast.optimization_parameters.get("occupancy_goal", 0.7) if forecast.optimization_parameters else 0.7
+        occupancy_goal = (
+            forecast.optimization_parameters.get("occupancy_goal", 0.7)
+            if forecast.optimization_parameters
+            else 0.7
+        )
         if occupancy_goal:
             # Adjust towards goal with some variance
             target_rate = occupancy_goal * random.uniform(0.8, 1.2)
             occupancy_rate = (occupancy_rate + target_rate) / 2
-            occupancy_rate = max(0.1, min(0.9, occupancy_rate))  # Clamp between 10% and 90%
+            occupancy_rate = max(
+                0.1, min(0.9, occupancy_rate)
+            )  # Clamp between 10% and 90%
 
         max_sales = int(cinema.total_seats * occupancy_rate)
         current_sales = 0  # New schedules start with 0 sales
@@ -203,16 +264,16 @@ class OptimizationService:
             service_fee=service_fee,
             max_sales=max_sales,
             current_sales=current_sales,
-            status="active"
+            status="active",
         )
 
     def _calculate_pricing(self, cinema_type: CinemaType, time_slot: datetime) -> float:
         """Calculate realistic pricing based on cinema type and time slot"""
         # Base price varies by time
         base_prices = {
-            "morning": 8.50,    # 9 AM - 12 PM
-            "afternoon": 10.00, # 12 PM - 6 PM
-            "evening": 12.50,   # 6 PM - 11 PM
+            "morning": 8.50,  # 9 AM - 12 PM
+            "afternoon": 10.00,  # 12 PM - 6 PM
+            "evening": 12.50,  # 6 PM - 11 PM
         }
 
         hour = time_slot.hour
@@ -233,7 +294,9 @@ class OptimizationService:
         # Round to 2 decimal places
         return round(final_price, 2)
 
-    def _apply_parameters(self, schedules: List[Schedule], parameters: Dict[str, Any]) -> List[Schedule]:
+    def _apply_parameters(
+        self, schedules: List[Schedule], parameters: Dict[str, Any]
+    ) -> List[Schedule]:
         """Apply optimization parameters to adjust generated schedules"""
         if not parameters:
             return schedules
@@ -250,46 +313,8 @@ class OptimizationService:
                 schedule.service_fee = schedule.unit_price * 0.15
                 schedule.service_fee = round(schedule.service_fee, 2)
 
-        # Additional parameter applications could be added here
-        # For example: adjusting time slot distributions, cinema preferences, etc.
-
         return schedules
 
-    def _validate_parameters(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate and sanitize optimization parameters"""
-        validated = {}
-
-        # Validate revenue_goal (0.5 to 2.0 multiplier)
-        if "revenue_goal" in parameters:
-            revenue_goal = parameters["revenue_goal"]
-            if isinstance(revenue_goal, (int, float)) and 0.5 <= revenue_goal <= 2.0:
-                validated["revenue_goal"] = float(revenue_goal)
-            else:
-                logger.warning(f"Invalid revenue_goal {revenue_goal}, using default 1.0")
-                validated["revenue_goal"] = 1.0
-
-        # Validate occupancy_goal (0.3 to 0.9 target rate)
-        if "occupancy_goal" in parameters:
-            occupancy_goal = parameters["occupancy_goal"]
-            if isinstance(occupancy_goal, (int, float)) and 0.3 <= occupancy_goal <= 0.9:
-                validated["occupancy_goal"] = float(occupancy_goal)
-            else:
-                logger.warning(f"Invalid occupancy_goal {occupancy_goal}, using default 0.7")
-                validated["occupancy_goal"] = 0.7
-
-        # Validate movie_preferences (dict with movie_id -> weight 0.1-2.0)
-        if "movie_preferences" in parameters:
-            movie_prefs = parameters["movie_preferences"]
-            if isinstance(movie_prefs, dict):
-                validated_prefs = {}
-                for movie_id, weight in movie_prefs.items():
-                    if isinstance(weight, (int, float)) and 0.1 <= weight <= 2.0:
-                        validated_prefs[str(movie_id)] = float(weight)
-                    else:
-                        logger.warning(f"Invalid weight {weight} for movie {movie_id}, skipping")
-                validated["movie_preferences"] = validated_prefs
-
-        return validated
 
 # Global optimization service instance
 optimization_service = OptimizationService()

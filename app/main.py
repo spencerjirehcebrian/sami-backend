@@ -10,9 +10,15 @@ from app.api.forecasts import router as forecasts_router
 from app.api.chat import router as chat_router
 from app.notifications.events import setup_database_event_handlers
 from app.database import test_db_connection, get_db_health
-import logging
+from app.logging import setup_logging, get_logger
+from app.middleware import RequestLoggingMiddleware
+import os
 
-logger = logging.getLogger(__name__)
+# Initialize structured logging
+environment = os.getenv("ENVIRONMENT", "development")
+setup_logging(environment)
+
+logger = get_logger(__name__)
 
 
 @asynccontextmanager
@@ -31,6 +37,9 @@ app = FastAPI(
     description="Cinema Schedule Management AI Backend",
     lifespan=lifespan
 )
+
+# Add request logging middleware
+app.add_middleware(RequestLoggingMiddleware)
 
 # CORS for Next.js frontend
 app.add_middleware(

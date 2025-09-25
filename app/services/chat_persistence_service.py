@@ -6,6 +6,7 @@ from app.models.chat import ChatSession, ChatMessage
 from datetime import datetime
 import logging
 import uuid
+import hashlib
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,23 @@ class ChatPersistenceService:
 
     def __init__(self, db: Session = None):
         self.db = db or next(get_db())
+
+    def _normalize_session_id(self, session_id: str) -> str:
+        """
+        Normalize session ID to ensure it's a valid UUID.
+        For test sessions or non-UUID strings, generate a deterministic UUID.
+        """
+        try:
+            # Try to parse as UUID first
+            uuid.UUID(session_id)
+            return session_id
+        except ValueError:
+            # Not a valid UUID, generate one deterministically from the session_id
+            # This ensures same session_id always maps to same UUID
+            namespace = uuid.UUID('12345678-1234-5678-1234-567812345678')
+            deterministic_uuid = uuid.uuid5(namespace, session_id)
+            logger.debug(f"Converted session_id '{session_id}' to UUID: {deterministic_uuid}")
+            return str(deterministic_uuid)
 
     async def ensure_chat_session(self, session_id: str, context: Optional[Dict[str, Any]] = None) -> ChatSession:
         """
@@ -27,13 +45,16 @@ class ChatPersistenceService:
             ChatSession object
         """
         try:
+            # Normalize session ID to ensure it's a valid UUID
+            normalized_session_id = self._normalize_session_id(session_id)
+
             # Try to find existing session
-            session = self.db.query(ChatSession).filter(ChatSession.id == session_id).first()
+            session = self.db.query(ChatSession).filter(ChatSession.id == normalized_session_id).first()
 
             if not session:
                 # Create new session
                 session = ChatSession(
-                    id=session_id,
+                    id=normalized_session_id,
                     started_at=datetime.utcnow(),
                     last_activity=datetime.utcnow(),
                     context=context
@@ -41,14 +62,14 @@ class ChatPersistenceService:
                 self.db.add(session)
                 self.db.commit()
                 self.db.refresh(session)
-                logger.info(f"Created new chat session: {session_id}")
+                logger.info(f"Created new chat session: {session_id} -> {normalized_session_id}")
             else:
                 # Update last activity
                 session.last_activity = datetime.utcnow()
                 if context:
                     session.context = {**(session.context or {}), **context}
                 self.db.commit()
-                logger.debug(f"Updated existing chat session: {session_id}")
+                logger.debug(f"Updated existing chat session: {session_id} -> {normalized_session_id}")
 
             return session
 
@@ -81,13 +102,16 @@ class ChatPersistenceService:
             ChatMessage object
         """
         try:
+            # Normalize session ID
+            normalized_session_id = self._normalize_session_id(session_id)
+
             # Ensure session exists
             await self.ensure_chat_session(session_id)
 
             # Create user message
             message = ChatMessage(
                 id=str(uuid.uuid4()),
-                session_id=session_id,
+                session_id=normalized_session_id,
                 sender="user",
                 content=content,
                 message_type=message_type,
@@ -131,13 +155,16 @@ class ChatPersistenceService:
             ChatMessage object
         """
         try:
+            # Normalize session ID
+            normalized_session_id = self._normalize_session_id(session_id)
+
             # Update session activity
             await self.update_session_activity(session_id)
 
             # Create AI message
             message = ChatMessage(
                 id=str(uuid.uuid4()),
-                session_id=session_id,
+                session_id=normalized_session_id,
                 sender="ai",
                 content=content,
                 message_type=message_type,
@@ -169,13 +196,16 @@ class ChatPersistenceService:
             session_id: Chat session identifier
         """
         try:
-            session = self.db.query(ChatSession).filter(ChatSession.id == session_id).first()
+            # Normalize session ID
+            normalized_session_id = self._normalize_session_id(session_id)
+
+            session = self.db.query(ChatSession).filter(ChatSession.id == normalized_session_id).first()
             if session:
                 session.last_activity = datetime.utcnow()
                 self.db.commit()
-                logger.debug(f"Updated activity for session {session_id}")
+                logger.debug(f"Updated activity for session {session_id} -> {normalized_session_id}")
             else:
-                logger.warning(f"Attempted to update activity for non-existent session: {session_id}")
+                logger.warning(f"Attempted to update activity for non-existent session: {session_id} -> {normalized_session_id}")
 
         except SQLAlchemyError as e:
             logger.error(f"Database error updating session activity {session_id}: {e}")
@@ -197,13 +227,16 @@ class ChatPersistenceService:
             Dictionary with session info and messages, or None if not found
         """
         try:
-            session = self.db.query(ChatSession).filter(ChatSession.id == session_id).first()
+            # Normalize session ID
+            normalized_session_id = self._normalize_session_id(session_id)
+
+            session = self.db.query(ChatSession).filter(ChatSession.id == normalized_session_id).first()
             if not session:
                 return None
 
             messages = (
                 self.db.query(ChatMessage)
-                .filter(ChatMessage.session_id == session_id)
+                .filter(ChatMessage.session_id == normalized_session_id)
                 .order_by(ChatMessage.timestamp)
                 .all()
             )

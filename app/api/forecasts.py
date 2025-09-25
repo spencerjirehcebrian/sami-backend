@@ -1,14 +1,14 @@
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.services.forecast_service import ForecastService
 from app.exceptions import ValidationError, ResourceNotFoundError
+from app.logging import get_logger, add_request_context
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 from datetime import datetime
-import logging
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/forecasts", tags=["forecasts"])
 
@@ -53,8 +53,24 @@ async def get_all_forecasts(db: Session = Depends(get_db)):
 
 
 @router.post("", response_model=Dict[str, Any])
-async def create_forecast(forecast_data: ForecastCreate, db: Session = Depends(get_db)):
+async def create_forecast(
+    forecast_data: ForecastCreate,
+    request: Request,
+    db: Session = Depends(get_db)
+):
     """Create a new forecast and trigger schedule optimization"""
+    request_logger = add_request_context(
+        logger,
+        request_id=getattr(request.state, 'request_id', 'unknown'),
+        method=request.method,
+        path=str(request.url.path),
+        operation="create_forecast",
+        date_range_start=forecast_data.date_range_start,
+        date_range_end=forecast_data.date_range_end,
+        created_by=forecast_data.created_by
+    )
+    request_logger.info("Processing forecast creation request")
+
     try:
         forecast_service = ForecastService(db)
 
@@ -76,6 +92,11 @@ async def create_forecast(forecast_data: ForecastCreate, db: Session = Depends(g
             )
 
         # Create forecast and generate complete optimization
+        request_logger.info(
+            "Starting forecast generation",
+            date_range_days=(date_end - date_start).days + 1
+        )
+
         result = await forecast_service.generate_complete_forecast(
             date_range_start=date_start,
             date_range_end=date_end,
@@ -84,17 +105,38 @@ async def create_forecast(forecast_data: ForecastCreate, db: Session = Depends(g
             description=forecast_data.description
         )
 
+        request_logger.info(
+            "Forecast creation completed successfully",
+            forecast_id=result.get("id"),
+            forecast_name=result.get("name"),
+            schedules_generated=result.get("total_schedules_generated", 0),
+            status=result.get("status")
+        )
+
         return result
     except HTTPException:
         raise
     except ValidationError as e:
-        logger.warning(f"Validation error in create_forecast: {e.message}")
+        request_logger.warning(
+            "Validation error in forecast creation",
+            error=e.message,
+            error_type="ValidationError"
+        )
         raise HTTPException(status_code=400, detail=e.message)
     except ValueError as e:
-        logger.warning(f"Validation error in create_forecast: {e}")
+        request_logger.warning(
+            "Value validation error in forecast creation",
+            error=str(e),
+            error_type="ValueError"
+        )
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Error creating forecast: {e}")
+        request_logger.error(
+            "Unexpected error during forecast creation",
+            error=str(e),
+            error_type=type(e).__name__,
+            exc_info=True
+        )
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

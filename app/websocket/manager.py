@@ -3,12 +3,11 @@ from typing import Dict, List
 from app.database import get_db
 from app.services.chat_persistence_service import ChatPersistenceService
 import json
-import logging
+from app.logging import get_logger
+from app.middleware import WebSocketLoggingMiddleware
 from datetime import datetime
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 websocket_router = APIRouter()
 
